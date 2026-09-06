@@ -2,9 +2,23 @@ package pptx
 
 import (
 	"encoding/xml"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+func TestParseTextParagraphBoundsListLevels(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	for _, level := range []int{-maxInt - 1, -1, 0, 8, 9, maxInt} {
+		t.Run(strconv.Itoa(level), func(t *testing.T) {
+			input := `<a:p xmlns:a="urn:a"><a:pPr lvl="` + strconv.Itoa(level) + `"><a:buChar char="•"/></a:pPr><a:r><a:t>Item</a:t></a:r></a:p>`
+			p, ok := parseParagraphFixture(t, input)
+			if want := min(8, max(0, level)); !ok || p.level != want {
+				t.Fatalf("paragraph level = %d, ok = %v, want %d", p.level, ok, want)
+			}
+		})
+	}
+}
 
 func TestParseTextParagraphBulletKinds(t *testing.T) {
 	tests := []struct {

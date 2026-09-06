@@ -174,6 +174,11 @@ func (c *slideConverter) render(number int) bool {
 		return a.x < b.x
 	})
 
+	// Emit the fallback boundary before any body text, otherwise an untitled
+	// slide's text ends up under the preceding slide's heading in Markdown.
+	if len(sl.Shapes) == 0 || !sl.Shapes[0].isTitle || joinParaText(sl.Shapes[0].paras) == "" {
+		c.w.Heading(2, "Slide "+strconv.Itoa(number))
+	}
 	titled := false
 	for _, sh := range sl.Shapes {
 		if sh.isTitle && !titled && len(sh.paras) > 0 {
@@ -184,11 +189,6 @@ func (c *slideConverter) render(number int) bool {
 			}
 		}
 		c.renderShape(&sh)
-	}
-
-	if !titled {
-		// Without a title placeholder the slide still needs a boundary.
-		c.w.Heading(2, "Slide "+strconv.Itoa(number))
 	}
 
 	for _, tbl := range sl.Tables {

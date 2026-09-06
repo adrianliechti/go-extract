@@ -3,6 +3,7 @@
 package xlsx
 
 import (
+	"sort"
 	"strconv"
 	"strings"
 
@@ -292,26 +293,35 @@ func readSheet(pkg *opc.Package, part string, shared []string, styles *cellStyle
 		return nil
 	}
 
-	// A merged range stores its value in the top-left cell only; the rest must
-	// render empty even if a stale value survives in the file
-	// (ECMA-376 §18.3.1.55).
-	continuation := mergeContinuationCells(sh.Merges)
-
-	rows := make([][]string, 0, len(grid))
-	for _, placedRow := range grid {
+	rows := make([][]string, len(grid))
+	for index, placedRow := range grid {
 		row := make([]string, width)
 		for _, c := range placedRow.cells {
 			col := c.col - minCol
 			if col < 0 || col >= width {
 				continue
 			}
-			// Sheet coordinates are 1-based in mergeCell refs.
-			if continuation[cellCoord{row: placedRow.row, col: c.col + 1}] {
-				continue
-			}
 			row[col] = c.val
 		}
-		rows = append(rows, row)
+		rows[index] = row
+	}
+	if len(sh.Merges) > 0 {
+		// Visit sparse coordinates in row order for the merge sweep, while
+		// retaining the authored row order in the resulting Markdown.
+		continuation := newMergeCoverage(sh.Merges, minCol, maxCol)
+		order := make([]int, len(grid))
+		for i := range order {
+			order[i] = i
+		}
+		sort.SliceStable(order, func(i, j int) bool { return grid[order[i]].row < grid[order[j]].row })
+		for _, index := range order {
+			continuation.advance(grid[index].row)
+			for col, count := range continuation.counts {
+				if count > 0 {
+					rows[index][col] = ""
+				}
+			}
+		}
 	}
 
 	return trimEmpty(rows)
@@ -356,36 +366,6 @@ func resolveHyperlinks(rels opc.Relationships, links []xmlHyperlink) map[cellCoo
 
 // cellCoord is a 1-based worksheet coordinate.
 type cellCoord struct{ row, col int }
-
-// mergeContinuationCells returns every coordinate covered by a merged range
-// except its top-left anchor, which keeps the value.
-func mergeContinuationCells(merges []struct {
-	Ref string `xml:"ref,attr"`
-}) map[cellCoord]bool {
-	if len(merges) == 0 {
-		return nil
-	}
-	out := map[cellCoord]bool{}
-	for _, m := range merges {
-		left, top, right, bottom, ok := parseRange(m.Ref)
-		if !ok {
-			continue
-		}
-		// Guard against absurd ranges in malformed files.
-		if (right-left+1)*(bottom-top+1) > 1<<20 {
-			continue
-		}
-		for r := top; r <= bottom; r++ {
-			for c := left; c <= right; c++ {
-				if r == top && c == left {
-					continue
-				}
-				out[cellCoord{row: r, col: c}] = true
-			}
-		}
-	}
-	return out
-}
 
 // parseRange decodes a range reference such as "B2:D5" into 1-based bounds.
 func parseRange(ref string) (left, top, right, bottom int, ok bool) {

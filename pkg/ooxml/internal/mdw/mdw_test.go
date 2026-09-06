@@ -1,8 +1,23 @@
 package mdw
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 )
+
+func TestListItemBoundsIndentation(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	for _, depth := range []int{-maxInt - 1, -1, 0, 8, 9, maxInt} {
+		t.Run(strconv.Itoa(depth), func(t *testing.T) {
+			w := New()
+			w.ListItem(depth, 1, "Item")
+			if want := strings.Repeat("    ", min(8, max(0, depth))) + "1. Item\n"; w.String() != want {
+				t.Fatalf("ListItem = %q, want %q", w.String(), want)
+			}
+		})
+	}
+}
 
 func TestWriterSeparatesBlocksAndKeepsListsContiguous(t *testing.T) {
 	w := New()

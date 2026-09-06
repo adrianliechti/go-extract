@@ -178,17 +178,29 @@ func parseTxbxContent(d *xml.Decoder, start xml.StartElement) ([]paragraph, erro
 			// since the text box already breaks the document's block flow.
 			var tbl table
 			if err := d.DecodeElement(&tbl, &t); err == nil {
-				for i := range tbl.Rows {
-					for j := range tbl.Rows[i].Cells {
-						out = append(out, tbl.Rows[i].Cells[j].Paras...)
-					}
-				}
+				out = appendTableParagraphs(out, &tbl)
 			}
 			return true, nil
 		}
 		return false, nil
 	})
 	return out, err
+}
+
+func appendTableParagraphs(out []paragraph, tbl *table) []paragraph {
+	for _, row := range tbl.Rows {
+		for _, cell := range row.Cells {
+			for _, b := range cell.Blocks {
+				switch {
+				case b.Para != nil:
+					out = append(out, *b.Para)
+				case b.Table != nil:
+					out = appendTableParagraphs(out, b.Table)
+				}
+			}
+		}
+	}
+	return out
 }
 
 // walkChildren iterates the direct and nested children of an element, calling

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/adrianliechti/go-kernel/pkg/ooxml/internal/mdw"
 	"github.com/adrianliechti/go-kernel/pkg/ooxml/internal/opc"
 )
 
@@ -189,6 +190,7 @@ func parseTextParagraph(dec *xml.Decoder, start xml.StartElement) (slidePara, bo
 	}
 
 	p.text = normalizeSpace(b.String())
+	p.level = mdw.ClampListDepth(p.level)
 	if strings.TrimSpace(p.text) == "" {
 		return p, false
 	}

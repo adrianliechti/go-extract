@@ -101,9 +101,7 @@ func (w *Writer) ListItem(depth, number int, text string) {
 	if text == "" {
 		return
 	}
-	if depth < 0 {
-		depth = 0
-	}
+	depth = ClampListDepth(depth)
 	indent := strings.Repeat("    ", depth)
 
 	marker := "-"
@@ -116,6 +114,12 @@ func (w *Writer) ListItem(depth, number int, text string) {
 	w.b.WriteString(indent + marker + " " + text + "\n")
 	w.listPending = true
 }
+
+// ClampListDepth keeps indentation within Office's nine list levels. Apply it
+// before counter arithmetic as well as allocation: malformed levels can
+// otherwise overflow counter-reset loops or amplify a tiny input into a huge
+// Markdown indentation string.
+func ClampListDepth(depth int) int { return min(8, max(0, depth)) }
 
 // EndList closes a run of list items so the next block is separated from it.
 func (w *Writer) EndList() {

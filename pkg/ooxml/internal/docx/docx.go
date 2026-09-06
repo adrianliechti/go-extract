@@ -237,11 +237,11 @@ func (c *converter) listInfo(p *paragraph, styleID string) (numID string, level 
 			level, _ = strconv.Atoi(np.ILvl.Val)
 		}
 		if numID != "" && numID != "0" {
-			return numID, level, true
+			return numID, mdw.ClampListDepth(level), true
 		}
 	}
 	if n, lv, ok := c.styles.numbering(styleID); ok {
-		return n, lv, true
+		return n, mdw.ClampListDepth(lv), true
 	}
 	return "", 0, false
 }
@@ -274,13 +274,14 @@ func (c *converter) renderTable(t *table) {
 		cells := make([]string, 0, len(row.Cells))
 		for j := range row.Cells {
 			cell := &row.Cells[j]
-			cells = append(cells, c.cellText(cell))
+			text := c.cellText(cell)
+			cells = append(cells, text)
 
 			// A horizontally merged cell repeats its content across the span,
 			// matching the reference corpora's rendering of merged cells.
 			if span := cell.gridSpan(); span > 1 {
 				for k := 1; k < span; k++ {
-					cells = append(cells, c.cellText(cell))
+					cells = append(cells, text)
 				}
 			}
 		}
@@ -304,7 +305,7 @@ func propagateVerticalMerges(t *table, rows [][]string) {
 			cell := &t.Rows[i].Cells[j]
 			span := cell.gridSpan()
 			if cell.isVerticalContinuation() && col < len(rows[i]) && col < len(rows[i-1]) {
-				for k := 0; k < span && col+k < len(rows[i]); k++ {
+				for k := 0; k < span && col+k < len(rows[i]) && col+k < len(rows[i-1]); k++ {
 					rows[i][col+k] = rows[i-1][col+k]
 				}
 			}
@@ -315,18 +316,20 @@ func propagateVerticalMerges(t *table, rows [][]string) {
 
 func (c *converter) cellText(cell *tableCell) string {
 	var parts []string
-	for i := range cell.Paras {
-		if s := strings.TrimSpace(c.inlineText(&cell.Paras[i])); s != "" {
-			parts = append(parts, s)
-		}
-	}
-	// Nested tables are flattened into their cell as space-joined text; a GFM
-	// cell cannot contain a table.
-	for i := range cell.Tables {
-		for _, r := range cell.Tables[i].Rows {
-			for j := range r.Cells {
-				if s := strings.TrimSpace(c.cellText(&r.Cells[j])); s != "" {
-					parts = append(parts, s)
+	for _, b := range cell.Blocks {
+		switch {
+		case b.Para != nil:
+			if s := strings.TrimSpace(c.inlineText(b.Para)); s != "" {
+				parts = append(parts, s)
+			}
+		case b.Table != nil:
+			// GFM cells cannot contain tables. Flatten each nested table at
+			// its authored position between the surrounding paragraphs.
+			for _, r := range b.Table.Rows {
+				for j := range r.Cells {
+					if s := strings.TrimSpace(c.cellText(&r.Cells[j])); s != "" {
+						parts = append(parts, s)
+					}
 				}
 			}
 		}

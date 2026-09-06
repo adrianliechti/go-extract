@@ -165,9 +165,40 @@ type tableRow struct {
 }
 
 type tableCell struct {
-	TcPr   *tcProps    `xml:"tcPr"`
-	Paras  []paragraph `xml:"p"`
-	Tables []table     `xml:"tbl"`
+	TcPr   *tcProps
+	Blocks []block
+}
+
+// A cell's paragraphs and nested tables interleave just like body blocks.
+// Separate slices would move every nested table after the cell's final text.
+func (c *tableCell) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	return walkChildren(d, start, func(t xml.StartElement) (bool, error) {
+		switch t.Name.Local {
+		case "tcPr":
+			var pr tcProps
+			if err := d.DecodeElement(&pr, &t); err != nil {
+				return true, err
+			}
+			c.TcPr = &pr
+		case "p":
+			var p paragraph
+			if err := d.DecodeElement(&p, &t); err != nil {
+				return true, err
+			}
+			c.Blocks = append(c.Blocks, block{Para: &p})
+		case "tbl":
+			var tbl table
+			if err := d.DecodeElement(&tbl, &t); err != nil {
+				return true, err
+			}
+			c.Blocks = append(c.Blocks, block{Table: &tbl})
+		default:
+			// Match the previous struct decoder's treatment of unknown
+			// children; only direct cell blocks belong to this sequence.
+			return true, d.Skip()
+		}
+		return true, nil
+	})
 }
 
 type tcProps struct {
