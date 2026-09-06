@@ -1,6 +1,6 @@
 module github.com/adrianliechti/go-kernel
 
-go 1.27.0
+go 1.26
 
 require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2
