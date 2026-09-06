@@ -28,15 +28,15 @@ async function instantiateGo() {
 
   try {
     const result = await WebAssembly.instantiateStreaming(
-      fetch("kernel.wasm"),
+      fetch("extract.wasm"),
       go.importObject,
     );
     instance = result.instance;
   } catch (streamingError) {
     console.warn("Streaming WASM instantiation failed; using ArrayBuffer fallback.", streamingError);
-    const response = await fetch("kernel.wasm");
+    const response = await fetch("extract.wasm");
     if (!response.ok) {
-      throw new Error(`Could not load kernel.wasm (${response.status})`);
+      throw new Error(`Could not load extract.wasm (${response.status})`);
     }
     const result = await WebAssembly.instantiate(
       await response.arrayBuffer(),
@@ -50,8 +50,8 @@ async function instantiateGo() {
     setStatus("Go runtime stopped", "error");
   });
 
-  if (!globalThis.goKernel) {
-    throw new Error("Go runtime started without exposing goKernel");
+  if (!globalThis.goExtract) {
+    throw new Error("Go runtime started without exposing goExtract");
   }
 }
 
@@ -80,7 +80,7 @@ async function extract(name, mediaType, data) {
   await new Promise(requestAnimationFrame);
 
   try {
-    const result = await globalThis.goKernel.extract(name, mediaType, data);
+    const result = await globalThis.goExtract.extract(name, mediaType, data);
     if (!result || typeof result !== "object") {
       throw new Error("The Go runtime returned no extraction result. Check the browser console for a Go panic.");
     }

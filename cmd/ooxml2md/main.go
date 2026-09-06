@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	ooxml "github.com/adrianliechti/go-kernel/pkg/ooxml"
+	"github.com/adrianliechti/go-extract/internal/ooxml"
 )
 
 func main() {

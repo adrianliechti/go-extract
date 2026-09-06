@@ -6,8 +6,8 @@ coverage.out
 
 # Complete pinned corpora are fetched on demand. The small flat regression
 # cross-section beside these directories is intentionally retained.
-/pkg/pdf/testdata/external/corpora/
-/pkg/pdf/testdata/external/sample-files/
-/pkg/pdf/testdata/external/test_documents/
+/internal/pdf/testdata/external/corpora/
+/internal/pdf/testdata/external/sample-files/
+/internal/pdf/testdata/external/test_documents/
 
 .DS_Store

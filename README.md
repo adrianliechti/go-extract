@@ -1,6 +1,6 @@
-# go-kernel
+# go-extract
 
-`go-kernel` is a unified, local text-extraction library for:
+`go-extract` is a unified, local text-extraction library for:
 
 - PDF
 - Word (`.docx`, `.docm`, `.dotx`, `.dotm`)
@@ -25,11 +25,11 @@ import (
 	"fmt"
 	"log"
 
-	kernel "github.com/adrianliechti/go-kernel"
+	"github.com/adrianliechti/go-extract"
 )
 
 func main() {
-	doc, err := kernel.ExtractFile(context.Background(), "message.eml", kernel.Options{})
+	doc, err := extract.File(context.Background(), "message.eml", extract.Options{})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -43,27 +43,58 @@ func main() {
 }
 ```
 
+Use `extract.Bytes` for a document already in memory:
+
+```go
+doc, err := extract.Bytes(ctx, data, extract.Options{})
+```
+
+For inputs that need filename or media-type hints, such as plain text and
+Markdown, use `extract.Extract` with an `extract.Input`:
+
+```go
+doc, err := extract.Extract(ctx, extract.Input{
+	Name: "notes.md",
+	Data: data,
+}, extract.Options{})
+```
+
+Reuse a configured dispatcher for multiple documents:
+
+```go
+dispatcher := extract.New(extract.Options{MaxDepth: 4})
+doc, err := dispatcher.File(ctx, "message.eml")
+doc, err = dispatcher.Bytes(ctx, data)
+```
+
 Recursive extraction is on by default and bounded by depth, document-count,
 and per-attachment size limits. Unsupported attachments remain available as
 raw `Attachment.Data`; a supported attachment that fails extraction records a
 non-fatal `Attachment.Error`. Archive extraction additionally limits entry
 count, per-entry inflated bytes, and total inflated bytes.
 
-The format-specific APIs remain available under `pkg/archive`, `pkg/pdf`,
-`pkg/ooxml`, `pkg/rtf`, `pkg/text`, `pkg/html`, `pkg/eml`, and `pkg/msg`. Each
-package also exposes an `Extractor` implementing `pkg/extract.Extractor` for
-custom registries.
-
-HTML can also be converted directly:
+Configure individual formats through `extract.ArchiveOptions`, `PDFOptions`,
+`OOXMLOptions`, `RTFOptions`, `HTMLOptions`, and `MessageOptions`. For example,
+resolve relative HTML links against a base URL:
 
 ```go
-import htmlconv "github.com/adrianliechti/go-kernel/pkg/html"
-
-markdown, err := htmlconv.ToMarkdown(
-	[]byte(`<h1>Report</h1><p>Ready to publish.</p>`),
-	htmlconv.Options{BaseURL: "https://example.com/"},
-)
+doc, err := extract.Extract(ctx, extract.Input{
+	MediaType: "text/html",
+	Data:      []byte(`<h1>Report</h1><p><a href="/details">Details</a></p>`),
+}, extract.Options{
+	HTML: extract.HTMLOptions{BaseURL: "https://example.com/"},
+})
 ```
+
+Custom format adapters implement `extract.Extractor` and are registered in
+`extract.Options.Extractors`. They are tried before the built-in extractors.
+
+## Project structure
+
+The root `extract` package is the public API. Format implementations live in
+`internal/<format>`, with helpers directly below each format, such as
+`internal/ooxml/docx` and `internal/pdf/font`. Shared document types live in
+`internal/model` and are exposed through root aliases such as `extract.Document`.
 
 ## WebAssembly example
 

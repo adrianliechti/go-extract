@@ -10,7 +10,7 @@ tasks:
     desc: Build the WebAssembly module and browser assets
     cmds:
       - mkdir -p {{.DIST}}
-      - GOOS=js GOARCH=wasm go build -o {{.DIST}}/kernel.wasm .
+      - GOOS=js GOARCH=wasm go build -o {{.DIST}}/extract.wasm .
       - cp {{.GOROOT}}/lib/wasm/wasm_exec.js {{.DIST}}/wasm_exec.js
       - cp index.html app.js styles.css {{.DIST}}/
 

@@ -23,8 +23,8 @@ if [[ ! -x "$PDF2MD" || ! -x "$DETECT" ]]; then
   exit 1
 fi
 
-FIXTURES="$REPO_ROOT/pkg/pdf/testdata/fixtures"
-OUT="$REPO_ROOT/pkg/pdf/testdata/golden"
+FIXTURES="$REPO_ROOT/internal/pdf/testdata/fixtures"
+OUT="$REPO_ROOT/internal/pdf/testdata/golden"
 mkdir -p "$OUT/markdown" "$OUT/items" "$OUT/detect"
 
 # password_for echoes the --password arguments a fixture needs, if any.
@@ -52,4 +52,4 @@ for pdf in "$FIXTURES"/*.pdf; do
   printf '  %-46s %8s bytes md\n' "$name" "$(wc -c < "$OUT/markdown/$name.md" | tr -d ' ')"
 done
 
-echo "generated goldens for $count fixtures into pkg/pdf/testdata/golden"
+echo "generated goldens for $count fixtures into internal/pdf/testdata/golden"

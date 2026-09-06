@@ -1,4 +1,4 @@
-module github.com/adrianliechti/go-kernel
+module github.com/adrianliechti/go-extract
 
 go 1.26
 

@@ -12,9 +12,9 @@ destination=$2
 revision=$3
 
 case "$destination" in
-	pkg/pdf/testdata/external/*) ;;
+	internal/pdf/testdata/external/*) ;;
 	*)
-		printf 'refusing corpus destination outside pkg/pdf/testdata/external: %s\n' "$destination" >&2
+		printf 'refusing corpus destination outside internal/pdf/testdata/external: %s\n' "$destination" >&2
 		exit 2
 		;;
 esac
@@ -46,7 +46,7 @@ while [ "$path_component" != . ]; do
 done
 mkdir -p "$destination_parent_path"
 
-external_root=$(cd pkg/pdf/testdata/external && pwd -P)
+external_root=$(cd internal/pdf/testdata/external && pwd -P)
 destination_parent=$(cd "$destination_parent_path" && pwd -P)
 case "$destination_parent" in
 	"$external_root"|"$external_root"/*) ;;

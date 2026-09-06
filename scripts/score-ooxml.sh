@@ -10,7 +10,7 @@
 
 set -uo pipefail
 
-ROOT="${1:-pkg/pdf/testdata/external/test_documents}"
+ROOT="${1:-internal/pdf/testdata/external/test_documents}"
 shift || true
 EXTS=("$@")
 if [ ${#EXTS[@]} -eq 0 ]; then

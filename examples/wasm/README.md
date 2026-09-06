@@ -1,6 +1,6 @@
 # WebAssembly example
 
-This example compiles the unified `go-kernel` extractor to WebAssembly and
+This example compiles the unified `go-extract` extractor to WebAssembly and
 runs it entirely in the browser. The page can convert its built-in HTML sample
 or a local PDF, DOCX, XLSX, PPTX, HTML, EML, or MSG file to Markdown.
 

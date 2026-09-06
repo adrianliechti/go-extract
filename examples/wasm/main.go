@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"syscall/js"
 
-	kernel "github.com/adrianliechti/go-kernel"
+	"github.com/adrianliechti/go-extract"
 )
 
 type browserResult struct {
@@ -18,7 +18,7 @@ type browserResult struct {
 
 type browserDocument struct {
 	Name        string              `json:"name,omitempty"`
-	Format      kernel.Format       `json:"format"`
+	Format      extract.Format      `json:"format"`
 	MediaType   string              `json:"mediaType,omitempty"`
 	Markdown    string              `json:"markdown"`
 	Metadata    map[string]string   `json:"metadata,omitempty"`
@@ -38,17 +38,17 @@ type browserAttachment struct {
 var extractFunc js.Func
 
 func main() {
-	extractFunc = js.FuncOf(extract)
+	extractFunc = js.FuncOf(extractDocument)
 
 	api := js.Global().Get("Object").New()
 	api.Set("extract", extractFunc)
-	js.Global().Set("goKernel", api)
+	js.Global().Set("goExtract", api)
 
 	// Keep the Go runtime alive so JavaScript can call the exported function.
 	select {}
 }
 
-func extract(_ js.Value, args []js.Value) any {
+func extractDocument(_ js.Value, args []js.Value) any {
 	if len(args) != 3 {
 		return resolvedPromise(browserResult{Error: "extract expects name, media type, and Uint8Array arguments"})
 	}
@@ -63,15 +63,15 @@ func extract(_ js.Value, args []js.Value) any {
 	return extractionPromise(func() (result browserResult) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				result = browserResult{Error: fmt.Sprintf("go-kernel panic: %v", recovered)}
+				result = browserResult{Error: fmt.Sprintf("go-extract panic: %v", recovered)}
 			}
 		}()
 
-		doc, err := kernel.Extract(context.Background(), kernel.Input{
+		doc, err := extract.Extract(context.Background(), extract.Input{
 			Name:      name,
 			MediaType: mediaType,
 			Data:      data,
-		}, kernel.Options{})
+		}, extract.Options{})
 		if err != nil {
 			return browserResult{Error: err.Error()}
 		}
@@ -93,7 +93,7 @@ func copyBytes(value js.Value) ([]byte, error) {
 	return data, nil
 }
 
-func toBrowserDocument(doc *kernel.Document) *browserDocument {
+func toBrowserDocument(doc *extract.Document) *browserDocument {
 	if doc == nil {
 		return nil
 	}
