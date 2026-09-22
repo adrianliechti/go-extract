@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/adrianliechti/go-extract/internal/ooxml/mdw"
+	"github.com/adrianliechti/go-extract/internal/ooxml/media"
 	"github.com/adrianliechti/go-extract/internal/ooxml/opc"
 )
 
@@ -20,15 +21,16 @@ type slide struct {
 
 // slidePic is a picture placed on a slide, with the alt text authored for it.
 type slidePic struct {
-	relID string
-	alt   string
-	x, y  int64
+	blip media.Blip
+	alt  string
+	x, y int64
 }
 
 // shape is a text-bearing shape with its position, used to recover reading
 // order.
 type shape struct {
 	paras          []slidePara
+	pic            slidePic
 	x, y           int64
 	isTitle        bool
 	isTextBox      bool
@@ -80,7 +82,13 @@ func parseSlide(pkg *opc.Package, part string) (*slide, error) {
 			s.hidden = attr(se, "show") == "0" || attr(se, "show") == "false"
 		case "sp":
 			if sh, ok := parseShape(dec, se); ok {
-				s.Shapes = append(s.Shapes, sh)
+				if len(sh.paras) > 0 {
+					s.Shapes = append(s.Shapes, sh)
+				}
+				if sh.pic.blip.RelID != "" || sh.pic.blip.SVGRelID != "" {
+					sh.pic.x, sh.pic.y = sh.x, sh.y
+					s.Pics = append(s.Pics, sh.pic)
+				}
 			}
 		case "graphicFrame":
 			if tbl, ok := parseGraphicFrame(dec, se); ok {
@@ -103,7 +111,7 @@ func parseShape(dec *xml.Decoder, start xml.StartElement) (shape, bool) {
 	for depth > 0 {
 		tok, err := dec.Token()
 		if err != nil {
-			return sh, !sh.hidden && len(sh.paras) > 0
+			break
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
@@ -111,6 +119,12 @@ func parseShape(dec *xml.Decoder, start xml.StartElement) (shape, bool) {
 			switch t.Name.Local {
 			case "cNvPr":
 				sh.hidden = on(attr(t, "hidden"))
+				sh.pic.alt = firstNonEmpty(attr(t, "descr"), attr(t, "title"), attr(t, "name"))
+			case "blip":
+				if err := dec.DecodeElement(&sh.pic.blip, &t); err != nil {
+					return sh, false
+				}
+				depth--
 			case "cNvSpPr":
 				sh.isTextBox = on(attr(t, "txBox"))
 			case "ph":
@@ -143,7 +157,7 @@ func parseShape(dec *xml.Decoder, start xml.StartElement) (shape, bool) {
 			depth--
 		}
 	}
-	return sh, !sh.hidden && len(sh.paras) > 0
+	return sh, !sh.hidden && (len(sh.paras) > 0 || sh.pic.blip.RelID != "" || sh.pic.blip.SVGRelID != "")
 }
 
 // parseTextParagraph decodes an a:p element, concatenating its runs.
@@ -321,9 +335,10 @@ func parsePic(dec *xml.Decoder, start xml.StartElement) (slidePic, bool) {
 				hidden = on(attr(t, "hidden"))
 				p.alt = firstNonEmpty(attr(t, "descr"), attr(t, "title"), attr(t, "name"))
 			case "blip":
-				if id := firstNonEmpty(attr(t, "embed"), attr(t, "link")); id != "" {
-					p.relID = id
+				if err := dec.DecodeElement(&p.blip, &t); err != nil {
+					return p, false
 				}
+				depth--
 			case "off":
 				p.x = parseInt(attr(t, "x"))
 				p.y = parseInt(attr(t, "y"))
@@ -332,7 +347,7 @@ func parsePic(dec *xml.Decoder, start xml.StartElement) (slidePic, bool) {
 			depth--
 		}
 	}
-	return p, !hidden && p.relID != ""
+	return p, !hidden && (p.blip.RelID != "" || p.blip.SVGRelID != "")
 }
 
 // attr returns an attribute by local name, ignoring its namespace.

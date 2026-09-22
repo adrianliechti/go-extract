@@ -17,6 +17,12 @@ All formats produce Markdown through one interface. Attachments and archive
 entries are recursively dispatched through the same extractors, so chains such
 as EML → ZIP → TAR/GZIP → Office document yield a document tree.
 
+Office extraction accepts Strict and Transitional relationship namespaces and
+uses the main part's content type to recognize packages with nonstandard part
+locations. Word output preserves default and inherited heading, list, and run
+formatting, including explicit overrides. Embedded images use an available
+raster copy or fall back to SVG; Excel drawings are retained even on empty sheets.
+
 ```go
 package main
 

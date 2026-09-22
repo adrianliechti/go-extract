@@ -4,6 +4,8 @@ import (
 	"encoding/xml"
 	"io"
 	"strings"
+
+	"github.com/adrianliechti/go-extract/internal/ooxml/media"
 )
 
 // run is a w:r element: a span of text sharing formatting, plus anything the
@@ -28,8 +30,8 @@ type run struct {
 
 // runImage is an image reference discovered inside a run.
 type runImage struct {
-	RelID string
-	Alt   string
+	media.Blip
+	Alt string
 }
 
 // UnmarshalXML walks a w:r element.
@@ -97,16 +99,18 @@ func (r *run) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 			return false, nil
 
 		case "blip":
-			if id := firstNonEmpty(attr(t, "embed"), attr(t, "link")); id != "" {
-				r.Images = append(r.Images, runImage{RelID: id, Alt: pendingAlt})
-				pendingAlt = ""
+			var blip media.Blip
+			if err := d.DecodeElement(&blip, &t); err != nil {
+				return true, err
 			}
-			return false, nil
+			r.Images = append(r.Images, runImage{Blip: blip, Alt: pendingAlt})
+			pendingAlt = ""
+			return true, nil
 
 		case "imagedata":
 			// Legacy VML image reference.
 			if id := firstNonEmpty(attr(t, "id"), attr(t, "relid")); id != "" {
-				r.Images = append(r.Images, runImage{RelID: id, Alt: firstNonEmpty(attr(t, "title"), pendingAlt)})
+				r.Images = append(r.Images, runImage{Blip: media.Blip{RelID: id}, Alt: firstNonEmpty(attr(t, "title"), pendingAlt)})
 				pendingAlt = ""
 			}
 			return false, nil

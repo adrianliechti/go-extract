@@ -214,17 +214,12 @@ func (c *slideConverter) renderPics(pics []slidePic) {
 		return pics[i].x < pics[j].x
 	})
 
-	// Only p:pic elements are emitted. An image reachable solely through a
-	// relationship is a shape fill or slide background — decoration rather
-	// than content — and emitting it adds a generic, position-less reference
-	// for something the reader never perceives as a picture.
+	// Emit authored pictures and image-filled shapes, which can carry the
+	// slide's only content. Unreferenced media and slide backgrounds stay out
+	// of this collection; a relationship alone does not establish visibility.
 	rels := c.pkg.Rels(c.part)
 	for _, pic := range pics {
-		rel, ok := rels[pic.relID]
-		if !ok {
-			continue
-		}
-		name, ok := c.images.Add(rel)
+		name, ok := c.images.AddBlip(pic.blip, rels)
 		if !ok {
 			continue
 		}

@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"io"
 	"strconv"
+	"strings"
 )
 
 // The XML types below cover the WordprocessingML subset that carries visible
@@ -140,7 +141,7 @@ func (o *onOff) on() bool {
 	if o == nil {
 		return false
 	}
-	switch o.Val {
+	switch strings.TrimSpace(o.Val) {
 	case "", "1", "true", "on":
 		return true
 	}

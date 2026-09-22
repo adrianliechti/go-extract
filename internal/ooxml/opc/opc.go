@@ -64,6 +64,7 @@ func (l Limits) resolved() Limits {
 const (
 	RelOfficeDocument = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
 	RelImage          = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+	RelDrawing        = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing"
 	RelHyperlink      = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
 	RelStyles         = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"
 	RelNumbering      = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering"
@@ -93,7 +94,9 @@ type Package struct {
 
 // Relationship links a source part to a target part or external resource.
 type Relationship struct {
-	ID     string
+	ID string
+	// Type uses the Transitional URI for standard Office relationships;
+	// Strict equivalents are normalized at the package boundary.
 	Type   string
 	Target string
 	// External is true when Target is a URI rather than a part name, which is
@@ -331,7 +334,7 @@ func (p *Package) Rels(part string) Relationships {
 			for _, r := range x.Rels {
 				out[r.ID] = Relationship{
 					ID:         r.ID,
-					Type:       r.Type,
+					Type:       relationshipType(r.Type),
 					Target:     r.Target,
 					External:   strings.EqualFold(r.TargetMode, "External"),
 					SourcePart: key,
@@ -341,6 +344,19 @@ func (p *Package) Rels(part string) Relationships {
 	}
 	p.relCache[key] = out
 	return out
+}
+
+// ISO/IEC 29500 Strict uses purl.oclc.org for Office relationship types;
+// Transitional uses schemas.openxmlformats.org. Canonicalize that exact
+// namespace so all consumers (styles, images, hyperlinks, notes, etc.) agree.
+// Vendor extensions and unrelated URIs keep their original identity.
+func relationshipType(value string) string {
+	const strict = "http://purl.oclc.org/ooxml/officeDocument/relationships/"
+	const transitional = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+	if suffix, ok := strings.CutPrefix(value, strict); ok {
+		return transitional + suffix
+	}
+	return value
 }
 
 // Resolve turns a relationship's Target into an absolute part name. External

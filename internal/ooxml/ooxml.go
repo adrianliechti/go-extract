@@ -133,7 +133,7 @@ func Convert(data []byte, opts Options) (*Document, error) {
 	}
 
 	var doc *Document
-	switch detectFormat(main) {
+	switch detectFormat(main, pkg.ContentType(main)) {
 	case FormatDocx:
 		doc, err = docx.Convert(pkg, main, copts)
 	case FormatXlsx:
@@ -165,7 +165,7 @@ func Detect(data []byte) (Format, error) {
 	if err != nil {
 		return FormatUnknown, err
 	}
-	format := detectFormat(main)
+	format := detectFormat(main, pkg.ContentType(main))
 	if format == FormatUnknown {
 		return FormatUnknown, fmt.Errorf("%w: main part %q", ErrUnsupportedFormat, main)
 	}
@@ -181,9 +181,29 @@ func DetectFile(path string) (Format, error) {
 	return Detect(data)
 }
 
-// detectFormat classifies a package by the location of its main part, which
-// is fixed per format by the OOXML conventions.
-func detectFormat(mainPart string) Format {
+// The officeDocument relationship and main part's content type identify the
+// format; OPC does not require conventional filenames. Retain the path fallback
+// for producers that omit the main part's specific content-type declaration.
+func detectFormat(mainPart, contentType string) Format {
+	switch contentType {
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml",
+		"application/vnd.ms-word.document.macroEnabled.main+xml",
+		"application/vnd.ms-word.template.macroEnabledTemplate.main+xml":
+		return FormatDocx
+	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml",
+		"application/vnd.ms-excel.sheet.macroEnabled.main+xml",
+		"application/vnd.ms-excel.template.macroEnabled.main+xml":
+		return FormatXlsx
+	case "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml",
+		"application/vnd.openxmlformats-officedocument.presentationml.slideshow.main+xml",
+		"application/vnd.openxmlformats-officedocument.presentationml.template.main+xml",
+		"application/vnd.ms-powerpoint.presentation.macroEnabled.main+xml",
+		"application/vnd.ms-powerpoint.slideshow.macroEnabled.main+xml",
+		"application/vnd.ms-powerpoint.template.macroEnabled.main+xml":
+		return FormatPptx
+	}
 	switch {
 	case strings.HasPrefix(mainPart, "word/"):
 		return FormatDocx

@@ -38,15 +38,14 @@ func Convert(pkg *opc.Package, mainPart string, opts model.Options) (*model.Docu
 		// the only description of what the table holds. It is emitted even for
 		// a single-sheet workbook.
 		w.Heading(2, sh.Name)
-		if len(rows) == 0 {
-			continue
+		if len(rows) > 0 {
+			w.Table(rows)
 		}
-		w.Table(rows)
 
 		// Images anchored to this sheet follow its table.
 		if !opts.SkipImages {
-			for _, name := range sheetImages(pkg, sh.Part, images) {
-				w.Image("image", images.Link(name))
+			for _, img := range sheetImages(pkg, sh.Part, images) {
+				w.Image(img.alt, images.Link(img.name))
 			}
 		}
 	}
@@ -480,23 +479,6 @@ func columnIndex(ref string) (int, bool) {
 		return 0, false
 	}
 	return n - 1, true
-}
-
-// sheetImages collects images anchored to a worksheet via its drawing part.
-func sheetImages(pkg *opc.Package, sheetPart string, images *media.Collector) []string {
-	var out []string
-	for _, rel := range pkg.Rels(sheetPart) {
-		if !strings.HasSuffix(rel.Type, "/drawing") {
-			continue
-		}
-		drawingPart := rel.Resolve()
-		for _, dr := range pkg.Rels(drawingPart).ByType(opc.RelImage) {
-			if name, ok := images.Add(dr); ok {
-				out = append(out, name)
-			}
-		}
-	}
-	return out
 }
 
 // uses1904 reports whether the workbook uses the 1904 date system, which

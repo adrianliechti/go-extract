@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/adrianliechti/go-extract/internal/ooxml/mdw"
+	"github.com/adrianliechti/go-extract/internal/ooxml/media"
 	"github.com/adrianliechti/go-extract/internal/ooxml/opc"
 )
 
@@ -18,10 +19,16 @@ type imageRef struct {
 // "**bo**​**ld**" collapses to "**bold**".
 func (c *converter) inlineText(p *paragraph) string {
 	var b strings.Builder
+	styleID := c.styles.paragraphStyle(p.styleID())
 
 	// Track the currently open emphasis so adjacent runs with matching
 	// formatting share one pair of markers.
 	var openBold, openItalic, openStrike bool
+	var pendingSpace strings.Builder
+	flushSpace := func() {
+		b.WriteString(pendingSpace.String())
+		pendingSpace.Reset()
+	}
 
 	closeAll := func() {
 		if openStrike {
@@ -38,8 +45,11 @@ func (c *converter) inlineText(p *paragraph) string {
 		}
 	}
 
-	emit := func(r *run, linkTarget string) {
-		txt := runText(r)
+	emit := func(source *run, linkTarget string) {
+		r := *source
+		formatting := c.styles.runFormatting(styleID, source.RPr)
+		r.RPr = &formatting
+		txt := runText(&r)
 		if txt == "" {
 			return
 		}
@@ -48,18 +58,21 @@ func (c *converter) inlineText(p *paragraph) string {
 		// Markdown will not recognise them.
 		lead, core, trail := splitSpace(txt)
 		if core == "" {
-			closeAll()
-			b.WriteString(txt)
+			pendingSpace.WriteString(txt)
 			return
 		}
 
-		wantBold := r.bold() && linkTarget == ""
-		wantItalic := r.italic() && linkTarget == ""
-		wantStrike := r.strike() && linkTarget == ""
+		code := r.isCode()
+		wantBold := r.bold() && linkTarget == "" && !code
+		wantItalic := r.italic() && linkTarget == "" && !code
+		wantStrike := r.strike() && linkTarget == "" && !code
 
 		if openBold != wantBold || openItalic != wantItalic || openStrike != wantStrike {
 			closeAll()
 		}
+		// Delay trailing whitespace until the next run's formatting is known:
+		// it belongs inside a continuing span, outside a closing delimiter.
+		flushSpace()
 		b.WriteString(lead)
 		if wantBold && !openBold {
 			b.WriteString("**")
@@ -74,17 +87,17 @@ func (c *converter) inlineText(p *paragraph) string {
 			openStrike = true
 		}
 
-		core = mdw.EscapeInline(core)
-		if r.isCode() {
-			closeAll()
-			core = "`" + core + "`"
+		if code {
+			core = codeSpan(core)
+		} else {
+			core = mdw.EscapeInline(core)
 		}
 
 		if linkTarget != "" {
 			core = "[" + core + "](" + mdw.EscapeURL(linkTarget) + ")"
 		}
 		b.WriteString(core)
-		b.WriteString(trail)
+		pendingSpace.WriteString(trail)
 	}
 
 	for _, item := range p.Content {
@@ -99,6 +112,7 @@ func (c *converter) inlineText(p *paragraph) string {
 			}
 		case item.Math != nil:
 			closeAll()
+			flushSpace()
 			delim := "$"
 			if item.Math.display {
 				delim = "$$"
@@ -110,8 +124,29 @@ func (c *converter) inlineText(p *paragraph) string {
 		}
 	}
 	closeAll()
+	flushSpace()
 
 	return strings.TrimRight(b.String(), " \t")
+}
+
+// Code spans contain literal text: backslash escaping would change their
+// contents. A longer backtick delimiter (and boundary padding when needed)
+// keeps authored backticks inside the span under CommonMark's code-span rules.
+func codeSpan(text string) string {
+	longest, current := 0, 0
+	for _, r := range text {
+		if r == '`' {
+			current++
+			longest = max(longest, current)
+		} else {
+			current = 0
+		}
+	}
+	delimiter := strings.Repeat("`", longest+1)
+	if strings.HasPrefix(text, "`") || strings.HasSuffix(text, "`") {
+		text = " " + text + " "
+	}
+	return delimiter + text + delimiter
 }
 
 // splitSpace separates leading and trailing whitespace from the core text.
@@ -190,20 +225,16 @@ func (c *converter) paragraphImages(p *paragraph) []imageRef {
 func (c *converter) runImages(r *run) []imageRef {
 	var out []imageRef
 	for _, img := range r.Images {
-		if ref, ok := c.resolveImage(img.RelID, img.Alt); ok {
+		if ref, ok := c.resolveImage(img.Blip, img.Alt); ok {
 			out = append(out, ref)
 		}
 	}
 	return out
 }
 
-// resolveImage turns a relationship id into a collected image reference.
-func (c *converter) resolveImage(relID, alt string) (imageRef, bool) {
-	rel, ok := c.rels[relID]
-	if !ok {
-		return imageRef{}, false
-	}
-	name, ok := c.images.Add(rel)
+// resolveImage selects an available blip source and collects the image.
+func (c *converter) resolveImage(blip media.Blip, alt string) (imageRef, bool) {
+	name, ok := c.images.AddBlip(blip, c.rels)
 	if !ok {
 		return imageRef{}, false
 	}
