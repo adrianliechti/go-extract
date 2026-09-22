@@ -18,6 +18,7 @@ type imageRef struct {
 // "**bo**​**ld**" collapses to "**bold**".
 func (c *converter) inlineText(p *paragraph) string {
 	var b strings.Builder
+	styleID := c.styles.paragraphStyle(p.styleID())
 
 	// Track the currently open emphasis so adjacent runs with matching
 	// formatting share one pair of markers.
@@ -38,8 +39,11 @@ func (c *converter) inlineText(p *paragraph) string {
 		}
 	}
 
-	emit := func(r *run, linkTarget string) {
-		txt := runText(r)
+	emit := func(source *run, linkTarget string) {
+		r := *source
+		formatting := c.styles.runFormatting(styleID, source.RPr)
+		r.RPr = &formatting
+		txt := runText(&r)
 		if txt == "" {
 			return
 		}

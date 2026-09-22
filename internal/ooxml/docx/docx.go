@@ -162,11 +162,11 @@ func (c *converter) renderParagraph(p *paragraph) {
 		return
 	}
 
-	styleID := p.styleID()
+	styleID := c.styles.paragraphStyle(p.styleID())
 
 	// Headings come from the paragraph style, either a numeric outline level
 	// or a named Heading style.
-	if level, ok := c.styles.headingLevel(styleID); ok {
+	if level, ok := c.styles.paragraphHeading(p, styleID); ok {
 		c.w.EndList()
 		c.w.Heading(level, text)
 		c.emitImages(images)
@@ -228,22 +228,23 @@ func (c *converter) emitImages(images []imageRef) {
 // listInfo resolves a paragraph's numbering id and indent level, falling back
 // to the numbering declared by its style.
 func (c *converter) listInfo(p *paragraph, styleID string) (numID string, level int, ok bool) {
+	np := c.styles.numbering(styleID)
 	if p.PPr != nil && p.PPr.NumPr != nil {
-		np := p.PPr.NumPr
-		if np.NumID != nil {
-			numID = np.NumID.Val
+		direct := p.PPr.NumPr
+		if direct.NumID != nil {
+			np.NumID = direct.NumID
 		}
-		if np.ILvl != nil {
-			level, _ = strconv.Atoi(np.ILvl.Val)
-		}
-		if numID != "" && numID != "0" {
-			return numID, mdw.ClampListDepth(level), true
+		if direct.ILvl != nil {
+			np.ILvl = direct.ILvl
 		}
 	}
-	if n, lv, ok := c.styles.numbering(styleID); ok {
-		return n, mdw.ClampListDepth(lv), true
+	if np.NumID != nil {
+		numID = np.NumID.Val
 	}
-	return "", 0, false
+	if np.ILvl != nil {
+		level, _ = strconv.Atoi(np.ILvl.Val)
+	}
+	return numID, mdw.ClampListDepth(level), numID != "" && numID != "0"
 }
 
 // nextCounter advances the running number for an ordered list level and
