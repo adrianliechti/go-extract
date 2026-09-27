@@ -97,17 +97,26 @@ func (w *Writer) Heading(level int, text string) {
 // ListItem writes one list item at the given nesting depth. An ordered item
 // carries its number; an unordered item passes number <= 0.
 func (w *Writer) ListItem(depth, number int, text string) {
+	marker := "-"
+	if number > 0 {
+		marker = itoa(number) + "."
+	}
+	w.listItem(depth, marker, text)
+}
+
+// OrderedListItem includes a zero start, which is a valid CommonMark ordered
+// marker. ListItem retains its zero-as-bullet convention for existing callers.
+func (w *Writer) OrderedListItem(depth, number int, text string) {
+	w.listItem(depth, itoa(number)+".", text)
+}
+
+func (w *Writer) listItem(depth int, marker, text string) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return
 	}
 	depth = ClampListDepth(depth)
 	indent := strings.Repeat("    ", depth)
-
-	marker := "-"
-	if number > 0 {
-		marker = itoa(number) + "."
-	}
 
 	// Consecutive list items form one block, so no blank line between them.
 	w.startListItem()

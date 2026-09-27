@@ -1,6 +1,7 @@
 package xlsx
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -63,153 +64,34 @@ var builtinDateFormats = map[int]string{
 	58: `[$-411]ggge"年"m"月"d"日"`,
 }
 
-// builtinPercent are the reserved percentage formats.
-var builtinPercent = map[int]bool{9: true, 10: true}
-
-// numFormat describes what a cell's format means for rendering.
-type numFormat struct {
+// formatKind records the textual meaning of a single selected section.
+type formatKind struct {
 	isDate    bool
 	hasDate   bool
 	hasTime   bool
+	elapsed   bool
 	isPercent bool
-	decimals  int // digits after the point for percentages
+	decimals  int
 }
 
-// classifyFormat interprets a format code. An unrecognised or literal-heavy
-// code yields the zero value, which means "emit the stored value unchanged".
+type numFormat struct {
+	formatKind
+	sections []formatSection
+}
+
 func classifyFormat(id int, code string) numFormat {
-	var f numFormat
-
-	if builtinPercent[id] {
-		f.isPercent = true
-		if id == 10 {
-			f.decimals = 2
-		}
-		return f
-	}
-
 	if code == "" {
-		if builtin, ok := builtinDateFormats[id]; ok {
-			code = builtin
-		} else {
-			return f
+		switch id {
+		case 9:
+			code = "0%"
+		case 10:
+			code = "0.00%"
+		default:
+			code = builtinDateFormats[id]
 		}
 	}
-
-	// A code may carry several sections separated by ';' (positive; negative;
-	// zero; text). Only the first governs ordinary values.
-	if i := strings.IndexByte(code, ';'); i >= 0 {
-		code = code[:i]
-	}
-
-	hasDate, hasTime, literalOnly := scanFormatTokens(code)
-	if literalOnly {
-		// Codes such as LibreOffice's `\1\.0#` are entirely escaped literals
-		// and placeholders. Applying them would corrupt plain numbers, so the
-		// value passes through untouched.
-		return f
-	}
-
-	if hasDate || hasTime {
-		f.isDate = true
-		f.hasDate = hasDate
-		f.hasTime = hasTime
-		return f
-	}
-
-	if strings.Contains(code, "%") {
-		f.isPercent = true
-		f.decimals = decimalsIn(code)
-	}
-	return f
-}
-
-// scanFormatTokens walks a format code, ignoring quoted literals, escaped
-// characters and bracketed sections, and reports whether live date or time
-// tokens remain.
-func scanFormatTokens(code string) (hasDate, hasTime, literalOnly bool) {
-	sawLive := false
-
-	for i := 0; i < len(code); i++ {
-		switch c := code[i]; c {
-		case '\\':
-			i++ // the next character is a literal
-			continue
-		case '"':
-			// Skip to the closing quote.
-			for i++; i < len(code) && code[i] != '"'; i++ {
-			}
-			continue
-		case '[':
-			// Bracketed sections hold colours and conditions. [h], [m] and [s]
-			// are elapsed-time tokens and do count.
-			end := strings.IndexByte(code[i:], ']')
-			if end < 0 {
-				i = len(code)
-				continue
-			}
-			inner := strings.ToLower(code[i+1 : i+end])
-			if inner == "h" || inner == "hh" || inner == "m" || inner == "mm" || inner == "s" || inner == "ss" {
-				hasTime, sawLive = true, true
-			}
-			i += end
-			continue
-		}
-
-		switch c := lower(code[i]); c {
-		case 'y', 'd':
-			hasDate, sawLive = true, true
-		case 'h', 's':
-			hasTime, sawLive = true, true
-		case 'm':
-			// 'm' is minutes next to an hour or second token, otherwise month.
-			if adjacentToTime(code, i) {
-				hasTime = true
-			} else {
-				hasDate = true
-			}
-			sawLive = true
-		case '0', '#', '?', '%', 'e':
-			sawLive = true
-		}
-	}
-	return hasDate, hasTime, !sawLive
-}
-
-// adjacentToTime reports whether an 'm' run is bounded by an hour or second
-// token, which makes it minutes rather than months.
-func adjacentToTime(code string, i int) bool {
-	// Walk back over the current run of 'm'.
-	start := i
-	for start > 0 && lower(code[start-1]) == 'm' {
-		start--
-	}
-	end := i
-	for end+1 < len(code) && lower(code[end+1]) == 'm' {
-		end++
-	}
-
-	for j := start - 1; j >= 0; j-- {
-		c := lower(code[j])
-		if c == 'h' {
-			return true
-		}
-		if c == ']' || c == ':' || c == ' ' {
-			continue
-		}
-		break
-	}
-	for j := end + 1; j < len(code); j++ {
-		c := lower(code[j])
-		if c == 's' {
-			return true
-		}
-		if c == ':' || c == ' ' || c == '.' {
-			continue
-		}
-		break
-	}
-	return false
+	sections := parseFormatSections(code)
+	return numFormat{formatKind: sections[0].formatKind, sections: sections}
 }
 
 func lower(b byte) byte {
@@ -241,16 +123,35 @@ func decimalsIn(code string) int {
 // render applies a format to a stored numeric value. It returns the original
 // text unchanged whenever the format carries no textual meaning.
 func (f numFormat) render(raw string, date1904 bool) string {
-	if !f.isDate && !f.isPercent {
-		return denoise(raw)
-	}
 	v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
-	if err != nil {
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 		return raw
 	}
-
-	if f.isPercent {
-		return strconv.FormatFloat(v*100, 'f', f.decimals, 64) + "%"
+	kind, magnitude := f.selectSection(v)
+	if !kind.isDate && !kind.isPercent {
+		return denoise(raw)
+	}
+	if kind.isPercent {
+		// Extraction retains the sign, rather than reproducing a section's
+		// display-only parentheses or color.
+		return strconv.FormatFloat(v*100, 'f', kind.decimals, 64) + "%"
+	}
+	if magnitude {
+		v = math.Abs(v)
+	}
+	if kind.elapsed {
+		// Normalize durations to hours:minutes:seconds, retaining full hours
+		// beyond a day. Round the total once so fields carry consistently.
+		seconds := math.Round(math.Abs(v) * 86400)
+		if seconds >= math.MaxInt64 {
+			return raw
+		}
+		total := int64(seconds)
+		sign := ""
+		if v < 0 {
+			sign = "-"
+		}
+		return fmt.Sprintf("%s%02d:%02d:%02d", sign, total/3600, total/60%60, total%60)
 	}
 
 	t, ok := serialToTime(v, date1904)
@@ -258,9 +159,9 @@ func (f numFormat) render(raw string, date1904 bool) string {
 		return raw
 	}
 	switch {
-	case f.hasDate && f.hasTime:
+	case kind.hasDate && kind.hasTime:
 		return t.Format("2006-01-02 15:04:05")
-	case f.hasTime:
+	case kind.hasTime:
 		return t.Format("15:04:05")
 	default:
 		return t.Format("2006-01-02")

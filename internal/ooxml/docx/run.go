@@ -11,9 +11,9 @@ import (
 // run is a w:r element: a span of text sharing formatting, plus anything the
 // run anchors — images and text boxes.
 //
-// It is decoded by a token walk rather than struct tags because the elements
-// that matter are nested at varying depths inside DrawingML and VML, and
-// because mc:AlternateContent needs explicit branch selection.
+// It is decoded by a token walk because the relevant elements are nested at
+// varying depths inside DrawingML and VML. newDecoder selects compatibility
+// branches before this walk.
 type run struct {
 	RPr *runProps
 
@@ -69,17 +69,6 @@ func (r *run) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 			text.WriteString("-")
 			return false, nil
 
-		case "AlternateContent":
-			// Choice and Fallback describe the same content in different
-			// dialects. Taking both would duplicate every text box.
-			paras, imgs, err := r.parseAlternateContent(d, t)
-			if err != nil {
-				return true, err
-			}
-			r.TxbxParas = append(r.TxbxParas, paras...)
-			r.Images = append(r.Images, imgs...)
-			return true, nil
-
 		case "oMath", "oMathPara":
 			if latex, _ := parseOMML(d, t); latex != "" {
 				text.WriteString("$" + latex + "$")
@@ -120,50 +109,6 @@ func (r *run) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 
 	r.Text = normalizeSpace(text.String())
 	return err
-}
-
-// parseAlternateContent processes an mc:AlternateContent element, taking the
-// first mc:Choice and discarding mc:Fallback. A Fallback is used only when no
-// Choice was present, which happens in documents targeting older producers.
-func (r *run) parseAlternateContent(d *xml.Decoder, start xml.StartElement) ([]paragraph, []runImage, error) {
-	var chosen, fallback *run
-	tookChoice := false
-
-	err := walkChildren(d, start, func(t xml.StartElement) (bool, error) {
-		switch t.Name.Local {
-		case "Choice":
-			if tookChoice {
-				return true, d.Skip()
-			}
-			tookChoice = true
-			nested := &run{}
-			if err := nested.UnmarshalXML(d, t); err != nil {
-				return true, err
-			}
-			chosen = nested
-			return true, nil
-
-		case "Fallback":
-			nested := &run{}
-			if err := nested.UnmarshalXML(d, t); err != nil {
-				return true, err
-			}
-			fallback = nested
-			return true, nil
-		}
-		return false, nil
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if chosen != nil {
-		return chosen.TxbxParas, chosen.Images, nil
-	}
-	if fallback != nil {
-		return fallback.TxbxParas, fallback.Images, nil
-	}
-	return nil, nil, nil
 }
 
 // parseTxbxContent decodes the paragraphs inside a w:txbxContent element.

@@ -204,6 +204,7 @@ func detectFormat(mainPart, contentType string) Format {
 		"application/vnd.ms-powerpoint.template.macroEnabled.main+xml":
 		return FormatPptx
 	}
+	mainPart = strings.ToLower(mainPart)
 	switch {
 	case strings.HasPrefix(mainPart, "word/"):
 		return FormatDocx

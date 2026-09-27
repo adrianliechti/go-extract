@@ -1,10 +1,6 @@
 package xlsx
 
-import (
-	"strings"
-
-	"github.com/adrianliechti/go-extract/internal/ooxml/opc"
-)
+import "github.com/adrianliechti/go-extract/internal/ooxml/opc"
 
 // cellStyles resolves a cell's style index to its character formatting.
 // SpreadsheetML indirects twice: a cell's s attribute indexes cellXfs, and
@@ -39,20 +35,9 @@ type xmlStyleSheet struct {
 func loadStyles(pkg *opc.Package, mainPart string) *cellStyles {
 	s := &cellStyles{}
 
-	part := ""
-	for _, rel := range pkg.Rels(mainPart) {
-		if strings.HasSuffix(rel.Type, "/styles") {
-			if t := rel.Resolve(); pkg.Has(t) {
-				part = t
-				break
-			}
-		}
-	}
+	part := pkg.RelatedPart(mainPart, opc.RelStyles, "xl/styles.xml")
 	if part == "" {
-		if !pkg.Has("xl/styles.xml") {
-			return s
-		}
-		part = "xl/styles.xml"
+		return s
 	}
 
 	var ss xmlStyleSheet

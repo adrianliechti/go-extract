@@ -2,6 +2,51 @@ package xlsx
 
 import "testing"
 
+// Reference: office-open-xml-viewer 5788c687, 95bbd97b, 841068d0,
+// d7f6332c and 44c4de07. Extraction keeps its ISO date/clock convention
+// and preserves numeric values when a display-only format has no meaning.
+func TestRecentNumberFormatRegressions(t *testing.T) {
+	for _, tc := range []struct{ code, raw, want string }{
+		{"h:mm;@", "0.33333333333333331", "08:00:00"},
+		{"0.00;h:mm", "5", "5"},
+		{"0.00;h:mm", "-0.5", "12:00:00"},
+		{"[>=1]0.00;h:mm", "100", "100"},
+		{"[>=1]0.00;h:mm", "0.5", "12:00:00"},
+		{"h:mm;h:mm;0", "0", "0"},
+		{"0.00;0.00;yyyy-mm-dd", "0", "1899-12-31"},
+		{"0.0%;0.00", "-0.5", "-0.5"},
+		{"[>=1]0;0.0%", "0.125", "12.5%"},
+		{"0.00;@", "-5", "-5"},
+		{"[<1]yyyy;[>9999999]yyyy;@", "45292", "45292"},
+		{`";"h:mm;0`, "0.5", "12:00:00"},
+		{`h:mm_;;0`, "0.5", "12:00:00"},
+		{`h\:mm`, "0.5", "12:00:00"},
+		{`h":"mm`, "0.5", "12:00:00"},
+		{`mm\:ss`, "0.5", "12:00:00"},
+		{`0_h`, "5", "5"},
+		{`0*m`, "5", "5"},
+		{`0_""hours"`, "5", "5"},
+		{`0\""hours"\"`, "5", "5"},
+		{`0.0\%`, "0.125", "0.125"},
+		{`0.0"%"`, "0.125", "0.125"},
+		{"General", "45292", "45292"},
+		{"0.00E+00", "1234", "1234"},
+		{"0.0E0", "1234", "1234"},
+		{"[$-411]ggge", "45292", "2024-01-01"},
+		{"[$-411]rr", "45292", "2024-01-01"},
+		{"aaa", "45292", "2024-01-01"},
+		{"[h]:mm:ss", "1.5", "36:00:00"},
+		{"[h]:mm:ss", "-1.5", "-36:00:00"},
+		{"[h]:mm", "45292.33333333333", "1087016:00:00"},
+	} {
+		t.Run(tc.code+"/"+tc.raw, func(t *testing.T) {
+			if got := classifyFormat(164, tc.code).render(tc.raw, false); got != tc.want {
+				t.Fatalf("render(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestClassifyFormat(t *testing.T) {
 	tests := []struct {
 		name    string

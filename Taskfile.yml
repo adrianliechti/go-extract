@@ -54,6 +54,11 @@ tasks:
     cmds:
       - go test -short ./... {{.CLI_ARGS}}
 
+  test-ooxml-e2e:
+    desc: Check Office extraction through bytes, files and nested archives
+    cmds:
+      - go test ./internal/ooxml -run EndToEnd -count=1 {{.CLI_ARGS}}
+
   test-corpus:
     desc: Run OOXML and email tests against the complete external corpus
     env:

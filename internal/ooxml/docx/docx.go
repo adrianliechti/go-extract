@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 
@@ -53,9 +54,10 @@ type converter struct {
 	images *media.Collector
 	w      *mdw.Writer
 
-	// listCounters tracks the running number for each (numId, level) so
-	// ordered lists restart and continue correctly.
+	// Instances sharing an abstract definition share its counters. A start
+	// override applies once per instance and level, resetting that shared count.
 	listCounters map[string]int
+	startedLists map[string]bool
 
 	// textboxDepth bounds recursion through nested text boxes.
 	textboxDepth int
@@ -120,7 +122,9 @@ func newDecoder(data []byte) *xml.Decoder {
 	// entity or encoding declaration does not discard the whole document.
 	dec.Strict = false
 	dec.CharsetReader = func(_ string, r io.Reader) (io.Reader, error) { return r, nil }
-	return dec
+	selected := xml.NewTokenDecoder(&compatibilityReader{decoder: dec})
+	selected.Strict = false
+	return selected
 }
 
 // ── rendering ────────────────────────────────────────────────────────
@@ -128,6 +132,7 @@ func newDecoder(data []byte) *xml.Decoder {
 func (c *converter) renderBlocks(blocks []block) {
 	if c.listCounters == nil {
 		c.listCounters = map[string]int{}
+		c.startedLists = map[string]bool{}
 	}
 	for _, b := range blocks {
 		switch {
@@ -177,11 +182,15 @@ func (c *converter) renderParagraph(p *paragraph) {
 	// paragraph or inherited from its style.
 	if numID, level, ok := c.listInfo(p, styleID); ok {
 		ordered, start := c.num.format(numID, level)
-		number := 0
-		if ordered {
-			number = c.nextCounter(numID, level, start)
+		number := c.nextCounter(numID, level, start)
+		if definition, ok := c.num.lookup(numID, level); ok && definition.Format == "none" {
+			c.w.EndList()
+			c.w.Block(text)
+		} else if ordered {
+			c.w.OrderedListItem(level, number, text)
+		} else {
+			c.w.ListItem(level, 0, text)
 		}
-		c.w.ListItem(level, number, text)
 		c.emitImages(images)
 		return
 	}
@@ -247,19 +256,42 @@ func (c *converter) listInfo(p *paragraph, styleID string) (numID string, level 
 	return numID, mdw.ClampListDepth(level), numID != "" && numID != "0"
 }
 
-// nextCounter advances the running number for an ordered list level and
-// resets any deeper levels, matching how Word renumbers nested lists.
+// nextCounter advances an abstract list's count and resets only descendants
+// whose own restart threshold includes this occurrence of an ancestor.
 func (c *converter) nextCounter(numID string, level, start int) int {
-	key := numID + ":" + strconv.Itoa(level)
+	identity := "num:" + numID
+	if abstract, ok := c.num.numToAbstract[numID]; ok {
+		identity = "abstract:" + abstract
+	}
+	key := identity + ":" + strconv.Itoa(level)
 	cur, seen := c.listCounters[key]
 	if !seen {
-		cur = start - 1
+		cur = start
+	} else if cur < math.MaxInt {
+		cur++
 	}
-	cur++
+	instance := numID + ":" + strconv.Itoa(level)
+	if override, ok := c.num.starts[numID][level]; ok && !c.startedLists[instance] {
+		cur = override
+	}
+	c.startedLists[instance] = true
 	c.listCounters[key] = cur
 
-	for deeper := level + 1; deeper < 10; deeper++ {
-		delete(c.listCounters, numID+":"+strconv.Itoa(deeper))
+	for deeper := level + 1; deeper < 9; deeper++ {
+		threshold := deeper
+		if definition, ok := c.num.lookup(numID, deeper); ok {
+			threshold = definition.Restart
+		}
+		if level < threshold {
+			delete(c.listCounters, identity+":"+strconv.Itoa(deeper))
+		}
+	}
+	for ancestor := 0; ancestor < level; ancestor++ {
+		key := identity + ":" + strconv.Itoa(ancestor)
+		if _, seen := c.listCounters[key]; !seen {
+			_, initial := c.num.format(numID, ancestor)
+			c.listCounters[key] = initial
+		}
 	}
 	return cur
 }

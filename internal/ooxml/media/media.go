@@ -44,14 +44,13 @@ func (c *Collector) Add(rel opc.Relationship) (string, bool) {
 		return "", false
 	}
 
-	part := rel.Resolve()
+	part := c.pkg.PartName(rel.ResolvePart())
+	if part == "" {
+		return "", false
+	}
 	if name, ok := c.byPart[part]; ok {
 		return name, true
 	}
-	if !c.pkg.Has(part) {
-		return "", false
-	}
-
 	data, err := c.pkg.ReadPart(part)
 	if err != nil || len(data) == 0 {
 		return "", false

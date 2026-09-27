@@ -32,7 +32,7 @@ func sheetImages(pkg *opc.Package, sheetPart string, images *media.Collector) []
 		if !ok || rel.External || rel.Type != opc.RelDrawing {
 			continue
 		}
-		part := rel.Resolve()
+		part := rel.ResolvePart()
 		data, err := pkg.ReadPart(part)
 		if err != nil {
 			continue

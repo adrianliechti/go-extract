@@ -22,6 +22,10 @@ uses the main part's content type to recognize packages with nonstandard part
 locations. Word output preserves default and inherited heading, list, and run
 formatting, including explicit overrides. Embedded images use an available
 raster copy or fall back to SVG; Excel drawings are retained even on empty sheets.
+Relationship targets support equivalent case and percent encodings. Word selects
+supported compatibility branches and honors list start/restart rules. Excel
+selects number-format sections by value, emits ISO dates and clock times,
+and preserves elapsed durations longer than a day.
 
 ```go
 package main
@@ -113,3 +117,8 @@ task --dir examples/wasm serve
 
 Then open <http://localhost:8080>. See [`examples/wasm`](examples/wasm) for
 details.
+
+Run the synthetic Office end-to-end tests with `task test-ooxml-e2e` (or
+`go test ./internal/ooxml -run EndToEnd -count=1`). They exercise DOCX, XLSX,
+and PPTX through the public API, including local files, in-memory documents,
+embedded images, and Office documents inside ZIP archives.

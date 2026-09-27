@@ -153,11 +153,18 @@ func OpenWithLimits(data []byte, limits Limits) (*Package, error) {
 			return nil, fmt.Errorf("%w: archive declares more than %d inflated bytes", ErrResourceLimit, limits.MaxTotalInflatedBytes)
 		}
 		declaredTotal += f.UncompressedSize64
-		p.files[normalize(f.Name)] = f
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		key := normalize(f.Name)
+		if _, exists := p.files[key]; exists {
+			return nil, fmt.Errorf("%w: equivalent duplicate part %q", ErrNotOOXML, f.Name)
+		}
+		p.files[key] = f
 	}
 
 	// Every conforming package has a content-type map at the root.
-	if _, ok := p.files["[Content_Types].xml"]; !ok {
+	if !p.Has("[Content_Types].xml") {
 		return nil, fmt.Errorf("%w: missing [Content_Types].xml", ErrNotOOXML)
 	}
 	if err := p.loadContentTypes(); err != nil {
@@ -166,22 +173,49 @@ func OpenWithLimits(data []byte, limits Limits) (*Package, error) {
 	return p, nil
 }
 
-// normalize canonicalises a part name to the package-relative form used as a
-// map key: no leading slash, forward slashes only.
+// normalize computes the package lookup key. OPC part identity is ASCII
+// case-insensitive and includes percent-encoding equivalence.
 func normalize(name string) string {
 	name = strings.ReplaceAll(name, "\\", "/")
 	name = strings.TrimPrefix(name, "/")
-	return path.Clean(name)
+	name = path.Clean(name)
+	if normalized, ok := normalizePercent(name); ok {
+		name = normalized
+	}
+	return strings.ToLower(name)
+}
+
+// PartName returns the stored spelling of a part, with equivalent percent
+// encodings normalized. This gives media consumers a stable deduplication key
+// while preserving authored filename case. A missing part returns "".
+func (p *Package) PartName(name string) string {
+	if name == "" {
+		return ""
+	}
+	if f, ok := p.files[normalize(name)]; ok {
+		name := strings.TrimPrefix(strings.ReplaceAll(f.Name, "\\", "/"), "/")
+		if normalized, ok := normalizePercent(name); ok {
+			return normalized
+		}
+		return name
+	}
+	return ""
 }
 
 // Has reports whether a part exists.
 func (p *Package) Has(name string) bool {
+	if name == "" {
+		return false
+	}
 	_, ok := p.files[normalize(name)]
 	return ok
 }
 
 // ReadPart returns the decompressed bytes of a part.
 func (p *Package) ReadPart(name string) ([]byte, error) {
+	if name == "" {
+		return nil, fmt.Errorf("%w: empty part name", ErrPartNotFound)
+	}
 	n := normalize(name)
 	f, ok := p.files[n]
 	if !ok {
@@ -217,7 +251,9 @@ func (p *Package) ReadPart(name string) ([]byte, error) {
 func (p *Package) Parts() []string {
 	out := make([]string, 0, len(p.zr.File))
 	for _, f := range p.zr.File {
-		out = append(out, normalize(f.Name))
+		if !f.FileInfo().IsDir() {
+			out = append(out, p.PartName(f.Name))
+		}
 	}
 	return out
 }
@@ -359,41 +395,57 @@ func relationshipType(value string) string {
 	return value
 }
 
-// Resolve turns a relationship's Target into an absolute part name. External
-// targets are returned unchanged, since they are URIs rather than parts.
+// Resolve resolves a hyperlink target, retaining its fragment. External
+// targets are returned unchanged. Package readers should use ResolvePart.
 func (r Relationship) Resolve() string {
 	if r.External {
 		return r.Target
 	}
-	target := strings.ReplaceAll(r.Target, "\\", "/")
-	if strings.HasPrefix(target, "/") {
-		return normalize(target)
+	part := r.ResolvePart()
+	if _, fragment, ok := strings.Cut(r.Target, "#"); ok && part != "" {
+		return part + "#" + fragment
 	}
-	// Targets are relative to the directory of the part that declared them.
-	base := path.Dir(r.SourcePart)
-	if base == "." || r.SourcePart == "" {
-		return normalize(target)
+	return part
+}
+
+// ResolvePart returns the internal package part named by a relationship.
+// External relationships never name a readable part of this package.
+func (r Relationship) ResolvePart() string {
+	if r.External {
+		return ""
 	}
-	return normalize(path.Join(base, target))
+	return resolvePartName(r.SourcePart, r.Target)
+}
+
+// RelatedPart uses only the exact relationship type. A conventional fallback
+// applies when no relationship was authored, never when an authored target
+// is external, invalid, or missing.
+func (p *Package) RelatedPart(source, relType, fallback string) string {
+	rels := p.Rels(source).ByType(relType)
+	for _, rel := range rels {
+		if part := p.PartName(rel.ResolvePart()); part != "" {
+			return part
+		}
+	}
+	if len(rels) == 0 && fallback != "" {
+		return p.PartName(fallback)
+	}
+	return ""
 }
 
 // MainDocument returns the package's primary part, found by following the
 // officeDocument relationship from the package root.
 func (p *Package) MainDocument() (string, error) {
-	for _, rel := range p.Rels("").ByType(RelOfficeDocument) {
-		if target := rel.Resolve(); p.Has(target) {
-			return target, nil
-		}
+	if part := p.RelatedPart("", RelOfficeDocument, ""); part != "" {
+		return part, nil
 	}
 	// Some producers omit the relationship; fall back to the conventional
 	// locations for each format.
-	for _, guess := range []string{
-		"word/document.xml",
-		"xl/workbook.xml",
-		"ppt/presentation.xml",
-	} {
-		if p.Has(guess) {
-			return guess, nil
+	if len(p.Rels("").ByType(RelOfficeDocument)) == 0 {
+		for _, guess := range []string{"word/document.xml", "xl/workbook.xml", "ppt/presentation.xml"} {
+			if p.Has(guess) {
+				return p.PartName(guess), nil
+			}
 		}
 	}
 	return "", fmt.Errorf("%w: no office document part", ErrNotOOXML)

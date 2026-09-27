@@ -90,10 +90,10 @@ func loadSheets(pkg *opc.Package, mainPart string, includeHidden bool) []sheetRe
 			continue
 		}
 		rel, ok := rels[s.ID]
-		if !ok {
+		if !ok || rel.Type != opc.RelWorksheet {
 			continue
 		}
-		part := rel.Resolve()
+		part := rel.ResolvePart()
 		if !pkg.Has(part) {
 			continue
 		}
@@ -114,18 +114,9 @@ type xmlSST struct {
 }
 
 func loadSharedStrings(pkg *opc.Package, mainPart string) []string {
-	part := ""
-	for _, rel := range pkg.Rels(mainPart).ByType(opc.RelSharedStrings) {
-		if t := rel.Resolve(); pkg.Has(t) {
-			part = t
-			break
-		}
-	}
+	part := pkg.RelatedPart(mainPart, opc.RelSharedStrings, "xl/sharedStrings.xml")
 	if part == "" {
-		if !pkg.Has("xl/sharedStrings.xml") {
-			return nil
-		}
-		part = "xl/sharedStrings.xml"
+		return nil
 	}
 
 	var sst xmlSST

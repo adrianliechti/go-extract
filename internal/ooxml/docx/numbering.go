@@ -17,31 +17,50 @@ type numbering struct {
 	// overrides maps numId -> level -> format, taking precedence over the
 	// abstract definition.
 	overrides map[string]map[int]numLevel
+	starts    map[string]map[int]int
 }
 
 type numLevel struct {
-	Format string // decimal, bullet, lowerLetter, ...
-	Start  int
+	Format  string // decimal, bullet, lowerLetter, ...
+	Start   int
+	Restart int // one-based ancestor threshold; zero means never restart
+}
+
+type xmlNumLevel struct {
+	ILvl    string `xml:"ilvl,attr"`
+	Start   *val   `xml:"start"`
+	NumFmt  *val   `xml:"numFmt"`
+	Restart *val   `xml:"lvlRestart"`
+}
+
+func (lv xmlNumLevel) definition(index int) numLevel {
+	restart := intOr(lv.Restart, index)
+	if restart < 0 || restart > index {
+		restart = index
+	}
+	return numLevel{Format: valOr(lv.NumFmt, "decimal"), Start: listStart(lv.Start), Restart: restart}
+}
+
+func listStart(value *val) int {
+	start := intOr(value, 1)
+	if start < 0 {
+		return 1
+	}
+	return start
 }
 
 type xmlNumbering struct {
 	AbstractNums []struct {
-		ID     string `xml:"abstractNumId,attr"`
-		Levels []struct {
-			ILvl   string `xml:"ilvl,attr"`
-			Start  *val   `xml:"start"`
-			NumFmt *val   `xml:"numFmt"`
-		} `xml:"lvl"`
+		ID     string        `xml:"abstractNumId,attr"`
+		Levels []xmlNumLevel `xml:"lvl"`
 	} `xml:"abstractNum"`
 	Nums []struct {
 		ID          string `xml:"numId,attr"`
 		AbstractNum *val   `xml:"abstractNumId"`
 		Overrides   []struct {
-			ILvl string `xml:"ilvl,attr"`
-			Lvl  *struct {
-				Start  *val `xml:"start"`
-				NumFmt *val `xml:"numFmt"`
-			} `xml:"lvl"`
+			ILvl  string       `xml:"ilvl,attr"`
+			Lvl   *xmlNumLevel `xml:"lvl"`
+			Start *val         `xml:"startOverride"`
 		} `xml:"lvlOverride"`
 	} `xml:"num"`
 }
@@ -51,15 +70,16 @@ func loadNumbering(pkg *opc.Package, mainPart string) *numbering {
 		numToAbstract: map[string]string{},
 		levels:        map[string]map[int]numLevel{},
 		overrides:     map[string]map[int]numLevel{},
+		starts:        map[string]map[int]int{},
 	}
 
-	part := relatedPart(pkg, mainPart, opc.RelNumbering, "word/numbering.xml")
+	part := pkg.RelatedPart(mainPart, opc.RelNumbering, "word/numbering.xml")
 	if part == "" {
 		return n
 	}
 
 	var x xmlNumbering
-	if err := pkg.UnmarshalPart(part, &x); err != nil {
+	if err := unmarshalPart(pkg, part, &x); err != nil {
 		return n
 	}
 
@@ -67,13 +87,10 @@ func loadNumbering(pkg *opc.Package, mainPart string) *numbering {
 		levels := map[int]numLevel{}
 		for _, lv := range an.Levels {
 			idx, err := strconv.Atoi(lv.ILvl)
-			if err != nil {
+			if err != nil || idx < 0 || idx > 8 {
 				continue
 			}
-			levels[idx] = numLevel{
-				Format: valOr(lv.NumFmt, "decimal"),
-				Start:  intOr(lv.Start, 1),
-			}
+			levels[idx] = lv.definition(idx)
 		}
 		n.levels[an.ID] = levels
 	}
@@ -83,20 +100,23 @@ func loadNumbering(pkg *opc.Package, mainPart string) *numbering {
 			n.numToAbstract[num.ID] = num.AbstractNum.Val
 		}
 		for _, ov := range num.Overrides {
-			if ov.Lvl == nil {
+			idx, err := strconv.Atoi(ov.ILvl)
+			if err != nil || idx < 0 || idx > 8 {
 				continue
 			}
-			idx, err := strconv.Atoi(ov.ILvl)
-			if err != nil {
+			if ov.Start != nil {
+				if n.starts[num.ID] == nil {
+					n.starts[num.ID] = map[int]int{}
+				}
+				n.starts[num.ID][idx] = listStart(ov.Start)
+			}
+			if ov.Lvl == nil {
 				continue
 			}
 			if n.overrides[num.ID] == nil {
 				n.overrides[num.ID] = map[int]numLevel{}
 			}
-			n.overrides[num.ID][idx] = numLevel{
-				Format: valOr(ov.Lvl.NumFmt, "decimal"),
-				Start:  intOr(ov.Lvl.Start, 1),
-			}
+			n.overrides[num.ID][idx] = ov.Lvl.definition(idx)
 		}
 	}
 	return n
@@ -110,14 +130,11 @@ func (n *numbering) format(numID string, level int) (ordered bool, start int) {
 	if !ok {
 		return false, 1
 	}
-	switch lv.Format {
-	case "bullet", "none", "":
-		return false, 1
+	start = lv.Start
+	if override, ok := n.starts[numID][level]; ok {
+		start = override
 	}
-	if lv.Start < 1 {
-		return true, 1
-	}
-	return true, lv.Start
+	return lv.Format != "bullet" && lv.Format != "none" && lv.Format != "", start
 }
 
 func (n *numbering) lookup(numID string, level int) (numLevel, bool) {

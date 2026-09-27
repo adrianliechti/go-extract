@@ -58,15 +58,15 @@ func slideOrder(pkg *opc.Package, mainPart string) []string {
 	var out []string
 	for _, id := range ids {
 		rel, ok := rels[id]
-		if !ok {
+		if !ok || rel.Type != opc.RelSlide {
 			continue
 		}
-		if part := rel.Resolve(); pkg.Has(part) {
+		if part := rel.ResolvePart(); pkg.Has(part) {
 			out = append(out, part)
 		}
 	}
 
-	if len(out) > 0 {
+	if len(ids) > 0 {
 		return out
 	}
 
@@ -74,7 +74,7 @@ func slideOrder(pkg *opc.Package, mainPart string) []string {
 	// conventionally use.
 	var fallback []string
 	for _, name := range pkg.Parts() {
-		if strings.HasPrefix(name, "ppt/slides/slide") && strings.HasSuffix(name, ".xml") {
+		if lower := strings.ToLower(name); strings.HasPrefix(lower, "ppt/slides/slide") && strings.HasSuffix(lower, ".xml") {
 			fallback = append(fallback, name)
 		}
 	}
@@ -285,7 +285,7 @@ func joinParaText(paras []slidePara) string {
 // notesText returns the speaker notes attached to a slide.
 func notesText(pkg *opc.Package, slidePart string) string {
 	for _, rel := range pkg.Rels(slidePart).ByType(opc.RelNotesSlide) {
-		part := rel.Resolve()
+		part := rel.ResolvePart()
 		if !pkg.Has(part) {
 			continue
 		}

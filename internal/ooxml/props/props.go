@@ -19,18 +19,9 @@ type coreProperties struct {
 
 // Title returns the document title from core properties, or "" when absent.
 func Title(pkg *opc.Package) string {
-	part := ""
-	for _, rel := range pkg.Rels("").ByType(opc.RelCoreProperties) {
-		if t := rel.Resolve(); pkg.Has(t) {
-			part = t
-			break
-		}
-	}
+	part := pkg.RelatedPart("", opc.RelCoreProperties, "docProps/core.xml")
 	if part == "" {
-		if !pkg.Has("docProps/core.xml") {
-			return ""
-		}
-		part = "docProps/core.xml"
+		return ""
 	}
 
 	var cp coreProperties

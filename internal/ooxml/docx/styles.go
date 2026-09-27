@@ -46,13 +46,13 @@ type xmlStyles struct {
 func loadStyles(pkg *opc.Package, mainPart string) *styleTable {
 	t := &styleTable{byID: map[string]*style{}}
 
-	part := relatedPart(pkg, mainPart, opc.RelStyles, "word/styles.xml")
+	part := pkg.RelatedPart(mainPart, opc.RelStyles, "word/styles.xml")
 	if part == "" {
 		return t
 	}
 
 	var x xmlStyles
-	if err := pkg.UnmarshalPart(part, &x); err != nil {
+	if err := unmarshalPart(pkg, part, &x); err != nil {
 		return t
 	}
 
@@ -298,18 +298,4 @@ func (p *runProps) apply(src *runProps, toggle bool) {
 	if src.RFonts != nil && src.RFonts.ASCII != "" {
 		p.RFonts = src.RFonts
 	}
-}
-
-// relatedPart resolves a part by relationship type, falling back to the
-// conventional location when the relationship is absent.
-func relatedPart(pkg *opc.Package, from, relType, fallback string) string {
-	for _, rel := range pkg.Rels(from).ByType(relType) {
-		if target := rel.Resolve(); pkg.Has(target) {
-			return target
-		}
-	}
-	if pkg.Has(fallback) {
-		return fallback
-	}
-	return ""
 }
