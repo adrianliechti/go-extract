@@ -96,6 +96,13 @@ doc, err := extract.Extract(ctx, extract.Input{
 })
 ```
 
+HTML conversion preserves tables and strikethrough, removes `svg`, `template`,
+`object`, and `embed` elements along with scripts and styles, and prepends the
+page title as an H1 unless the body already starts with an H1. The title remains
+available in `doc.Metadata["title"]`. Pass the HTTP `Content-Type` as
+`Input.MediaType` to decode a declared charset; otherwise the encoding is sniffed
+from the document.
+
 Custom format adapters implement `extract.Extractor` and are registered in
 `extract.Options.Extractors`. They are tried before the built-in extractors.
 

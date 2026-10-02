@@ -83,6 +83,39 @@ func TestBytesDetectsDocumentsWithoutFilenameHints(t *testing.T) {
 	}
 }
 
+func TestExtractHTMLDefaultsAndCharset(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		mediaType string
+		meta      string
+	}{
+		{"HTTP charset", "text/html; charset=iso-8859-1", ""},
+		{"HTML charset", "text/html", `<meta charset="windows-1252">`},
+		{"file charset", "", `<meta charset="windows-1252">`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := "<html><head>" + tc.meta + "<title>Caf\xe9</title></head><body>" +
+				`<svg><title>Icon</title><text>Noise</text></svg>` +
+				`<p><del>Old</del> <a href="next">Next</a>.</p></body></html>`
+			doc, err := extract.Extract(t.Context(), extract.Input{
+				Name:      "page.html",
+				MediaType: tc.mediaType,
+				Data:      []byte(source),
+			}, extract.Options{HTML: extract.HTMLOptions{BaseURL: "https://example.com/docs/"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			const want = "# Café\n\n~~Old~~ [Next](https://example.com/docs/next)."
+			if doc.Markdown != want {
+				t.Fatalf("Markdown = %q, want %q", doc.Markdown, want)
+			}
+			if doc.Format != extract.FormatHTML || doc.MediaType != "text/html" || doc.Metadata["title"] != "Café" {
+				t.Fatalf("Document = %#v", doc)
+			}
+		})
+	}
+}
+
 func TestExtractRecursivelyExtractsEmailAttachments(t *testing.T) {
 	pdfData := buildPDF("Attached PDF text")
 	docxData := buildDOCX(t, "Attached Word text")

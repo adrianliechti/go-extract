@@ -60,6 +60,7 @@ func TestGoldenMarkdown(t *testing.T) {
 		}
 
 		got, err := pdf.ProcessFile(
+			t.Context(),
 			filepath.Join("testdata/fixtures", name+".pdf"),
 			pdf.Options{Password: fixturePasswords[name]},
 		)

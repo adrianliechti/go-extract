@@ -8,6 +8,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -82,12 +83,12 @@ func scan(path string) {
 	if err != nil {
 		return
 	}
-	conf := model.NewDefaultConfiguration()
+	conf := model.NewStatelessConfiguration()
 	conf.ValidationMode = model.ValidationRelaxed
 	if strings.Contains(path, "secret123") {
 		conf.UserPW = "secret123"
 	}
-	ctx, err := pdfcpu.Read(bytes.NewReader(data), conf)
+	ctx, err := pdfcpu.Read(context.Background(), bytes.NewReader(data), conf)
 	if err != nil {
 		return
 	}
@@ -98,7 +99,7 @@ func scan(path string) {
 
 	seen := map[string]bool{}
 	for i := 1; i <= xt.PageCount; i++ {
-		d, _, _, err := xt.PageDict(i, false)
+		d, _, _, err := xt.PageDict(context.Background(), i, false)
 		if err != nil || d == nil {
 			continue
 		}

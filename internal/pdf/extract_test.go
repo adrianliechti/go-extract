@@ -12,6 +12,7 @@ package pdf
 // fidelity into a failure.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -109,7 +110,7 @@ func TestExtractionFidelity(t *testing.T) {
 			continue
 		}
 
-		got, err := extractFixture(name)
+		got, err := extractFixture(t.Context(), name)
 		if err != nil {
 			report = append(report, fmt.Sprintf("  %-46s ERROR %v", name, err))
 			totalWant += len(want.Items)
@@ -159,16 +160,16 @@ func loadGoldenItems(path string) (*goldenItems, error) {
 }
 
 // extractFixture runs the extractor over a fixture and returns its text items.
-func extractFixture(name string) ([]TextItem, error) {
+func extractFixture(ctx context.Context, name string) ([]TextItem, error) {
 	data, err := os.ReadFile(filepath.Join("testdata/fixtures", name+".pdf"))
 	if err != nil {
 		return nil, err
 	}
-	doc, err := load(data, fixturePassword(name))
+	doc, err := load(ctx, data, fixturePassword(name))
 	if err != nil {
 		return nil, err
 	}
-	pages, err := doc.extract(nil, false)
+	pages, err := doc.extract(ctx, nil, false)
 	if err != nil {
 		return nil, err
 	}

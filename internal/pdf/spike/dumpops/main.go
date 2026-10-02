@@ -8,6 +8,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -34,10 +35,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	conf := model.NewDefaultConfiguration()
+	conf := model.NewStatelessConfiguration()
 	conf.ValidationMode = model.ValidationRelaxed
 	conf.UserPW = os.Getenv("PDFPW")
-	ctx, err := pdfcpu.Read(bytes.NewReader(data), conf)
+	ctx, err := pdfcpu.Read(context.Background(), bytes.NewReader(data), conf)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "read:", err)
 		os.Exit(1)
@@ -45,7 +46,7 @@ func main() {
 	xt := ctx.XRefTable
 	_ = xt.EnsurePageCount()
 
-	d, _, _, err := xt.PageDict(page, false)
+	d, _, _, err := xt.PageDict(context.Background(), page, false)
 	if err != nil || d == nil {
 		fmt.Fprintln(os.Stderr, "page dict:", err)
 		os.Exit(1)

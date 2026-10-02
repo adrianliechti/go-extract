@@ -13,19 +13,29 @@ import (
 	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/base"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/commonmark"
+	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/strikethrough"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/table"
 	"github.com/adrianliechti/go-extract/internal/model"
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/charset"
 )
 
-var markdownConverter = converter.NewConverter(
-	converter.WithPlugins(
-		base.NewBasePlugin(),
-		commonmark.NewCommonmarkPlugin(),
-		table.NewTablePlugin(),
-	),
-)
+var markdownConverter = newMarkdownConverter()
+
+func newMarkdownConverter() *converter.Converter {
+	conv := converter.NewConverter(
+		converter.WithPlugins(
+			base.NewBasePlugin(),
+			commonmark.NewCommonmarkPlugin(),
+			table.NewTablePlugin(),
+			strikethrough.NewStrikethroughPlugin(),
+		),
+	)
+	for _, tag := range []string{"svg", "template", "object", "embed"} {
+		conv.Register.TagType(tag, converter.TagTypeRemove, converter.PriorityStandard)
+	}
+	return conv
+}
 
 // Options configures HTML conversion.
 type Options struct {
@@ -45,7 +55,8 @@ type Document struct {
 	Title    string
 }
 
-// Convert decodes and converts an in-memory HTML document or fragment.
+// Convert decodes and converts an in-memory HTML document or fragment. A document
+// title is prepended as an H1 unless the converted body already starts with one.
 func Convert(data []byte, opts Options) (*Document, error) {
 	source, err := decode(data, opts.ContentType)
 	if err != nil {
@@ -65,8 +76,12 @@ func Convert(data []byte, opts Options) (*Document, error) {
 	if err != nil {
 		return nil, fmt.Errorf("html: convert to Markdown: %w", err)
 	}
+	markdown = strings.TrimSpace(markdown)
+	if title != "" && !strings.HasPrefix(markdown, "# ") {
+		markdown = strings.TrimSpace("# " + title + "\n\n" + markdown)
+	}
 	return &Document{
-		Markdown: strings.TrimSpace(markdown),
+		Markdown: markdown,
 		Title:    title,
 	}, nil
 }
@@ -147,6 +162,9 @@ func metadata(source string) (title, baseURL string) {
 	walk = func(node *html.Node) {
 		if node.Type == html.ElementNode {
 			switch strings.ToLower(node.Data) {
+			case "svg", "template", "object", "embed":
+				// Removed content must not supply the document title or base URL.
+				return
 			case "title":
 				if title == "" {
 					title = strings.Join(strings.Fields(nodeText(node)), " ")

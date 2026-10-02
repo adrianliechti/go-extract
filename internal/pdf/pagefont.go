@@ -1,6 +1,7 @@
 package pdf
 
 import (
+	"context"
 	"strings"
 
 	"github.com/adrianliechti/go-extract/internal/pdf/font"
@@ -37,20 +38,23 @@ type pageFont struct {
 }
 
 // buildPageFonts prepares every font in a page's resource dictionary.
-func buildPageFonts(xref *model.XRefTable, resources types.Dict) map[string]*pageFont {
+func buildPageFonts(ctx context.Context, xref *model.XRefTable, resources types.Dict) map[string]*pageFont {
 	out := map[string]*pageFont{}
 	fonts := dictOf(xref, resources["Font"])
 	for name, ref := range fonts {
+		if ctx.Err() != nil {
+			break
+		}
 		fd := dictOf(xref, ref)
 		if fd == nil {
 			continue
 		}
-		out[name] = buildPageFont(xref, name, fd)
+		out[name] = buildPageFont(ctx, xref, name, fd)
 	}
 	return out
 }
 
-func buildPageFont(xref *model.XRefTable, name string, fd types.Dict) *pageFont {
+func buildPageFont(ctx context.Context, xref *model.XRefTable, name string, fd types.Dict) *pageFont {
 	f := &pageFont{
 		name:     name,
 		baseFont: nameOf(xref, fd["BaseFont"]),
@@ -62,7 +66,7 @@ func buildPageFont(xref *model.XRefTable, name string, fd types.Dict) *pageFont 
 	f.buildEncoding(xref, fd, subtype)
 	f.widths = parseFontWidths(xref, fd)
 	if f.widths == nil {
-		f.widths = coreFontWidths(f.baseFont)
+		f.widths = coreFontWidths(ctx, f.baseFont)
 	}
 	f.toUnicode = buildToUnicode(xref, fd)
 	f.buildStyle(xref, fd)

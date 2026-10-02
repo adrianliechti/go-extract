@@ -49,6 +49,7 @@ func TestGarbledFixturesAreRoutedToOCR(t *testing.T) {
 	for _, name := range []string{"shifted_cipher_tounicode", "shinagawa_identity_h"} {
 		t.Run(name, func(t *testing.T) {
 			result, err := ProcessFile(
+				t.Context(),
 				filepath.Join("testdata", "fixtures", name+".pdf"),
 				Options{Mode: ModeAnalyze},
 			)
@@ -92,7 +93,7 @@ func TestClassifyKeepsFailedTextPageVisible(t *testing.T) {
 
 func TestInlineImageOperationMarksAndPositionsImage(t *testing.T) {
 	e := extractor{page: 2, gs: graphicsState{ctm: matrix{20, 0, 0, 30, 5, 7}}}
-	e.run(content.Operation{Operator: "INLINE_IMAGE"})
+	e.run(t.Context(), content.Operation{Operator: "INLINE_IMAGE"})
 	if !e.out.hasImages || len(e.out.items) != 1 {
 		t.Fatalf("inline image output = %#v", e.out)
 	}
@@ -104,7 +105,7 @@ func TestInlineImageOperationMarksAndPositionsImage(t *testing.T) {
 
 func TestBeginTextPreservesRenderingMode(t *testing.T) {
 	e := extractor{gs: graphicsState{text: textState{renderMode: 3}}}
-	e.run(content.Operation{Operator: "BT"})
+	e.run(t.Context(), content.Operation{Operator: "BT"})
 	if e.gs.text.renderMode != 3 {
 		t.Fatalf("BT reset rendering mode to %d", e.gs.text.renderMode)
 	}
@@ -145,7 +146,7 @@ func TestTJAdjustmentAdvancesWithoutResolvedFont(t *testing.T) {
 }
 
 func TestCoreFontMetricsFallback(t *testing.T) {
-	fw := coreFontWidths("Courier")
+	fw := coreFontWidths(t.Context(), "Courier")
 	if fw == nil {
 		t.Fatal("Courier core metrics unavailable")
 	}
@@ -209,7 +210,7 @@ func TestFormXObjectExtractsTextWithMatrix(t *testing.T) {
 		gs:         graphicsState{ctm: identity, lineWidth: 1, text: textState{fontSize: 12, horizontalScale: 1}},
 		textMatrix: identity, lineMatrix: identity,
 	}
-	e.doXObject("Fm1")
+	e.doXObject(t.Context(), "Fm1")
 
 	if len(e.out.items) != 1 || e.out.items[0].Text != "Hello" {
 		t.Fatalf("form items = %#v", e.out.items)
