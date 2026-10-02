@@ -1,6 +1,8 @@
 package pdf
 
 import (
+	"context"
+
 	"github.com/pdfcpu/pdfcpu/pkg/font"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -66,13 +68,13 @@ func (fw *fontWidths) widthFor(code uint16) uint16 {
 // coreFontWidths supplies the metrics that standard Type 1 fonts are allowed
 // to omit from their font dictionary. pdfcpu ships the AFM data for all 14
 // core fonts; using it avoids zero-width text and a stalled text matrix.
-func coreFontWidths(name string) *fontWidths {
+func coreFontWidths(ctx context.Context, name string) *fontWidths {
 	if !font.IsCoreFont(name) {
 		return nil
 	}
 	widths := make(map[uint16]uint16, 256)
 	for code := 0; code < 256; code++ {
-		w, err := font.CharWidth(name, rune(code))
+		w, err := font.CharWidth(ctx, name, rune(code))
 		if err != nil {
 			return nil
 		}

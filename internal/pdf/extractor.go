@@ -33,7 +33,7 @@ func (e *Extractor) Extract(ctx context.Context, input model.Input) (*model.Docu
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	result, err := Process(input.Data, e.Options)
+	result, err := Process(ctx, input.Data, e.Options)
 	if err != nil {
 		return nil, err
 	}

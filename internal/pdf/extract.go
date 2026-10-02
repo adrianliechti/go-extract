@@ -1,6 +1,8 @@
 package pdf
 
 import (
+	"context"
+
 	"github.com/adrianliechti/go-extract/internal/pdf/content"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -117,10 +119,10 @@ const maxFormXObjectDepth = 5
 
 // extractPage runs the content stream of one page and returns its text items
 // and painted geometry.
-func extractPage(xref *model.XRefTable, pageNr int, includeInvisible bool) (pageExtraction, error) {
+func extractPage(ctx context.Context, xref *model.XRefTable, pageNr int, includeInvisible bool) (pageExtraction, error) {
 	empty := pageExtraction{page: uint32(pageNr)}
 
-	d, _, attrs, err := xref.PageDict(pageNr, false)
+	d, _, attrs, err := xref.PageDict(ctx, pageNr, false)
 	if err != nil {
 		return empty, err
 	}
@@ -158,7 +160,7 @@ func extractPage(xref *model.XRefTable, pageNr int, includeInvisible bool) (page
 	e := &extractor{
 		xref:             xref,
 		page:             uint32(pageNr),
-		fonts:            buildPageFonts(xref, resources),
+		fonts:            buildPageFonts(ctx, xref, resources),
 		resources:        resources,
 		xobjects:         buildXObjects(xref, resources),
 		includeInvisible: includeInvisible,
@@ -172,14 +174,20 @@ func extractPage(xref *model.XRefTable, pageNr int, includeInvisible bool) (page
 	e.out.operations = len(ops)
 
 	for _, op := range ops {
-		e.run(op)
+		if err := ctx.Err(); err != nil {
+			return empty, err
+		}
+		e.run(ctx, op)
+	}
+	if err := ctx.Err(); err != nil {
+		return empty, err
 	}
 
 	clipAndNormalizePage(&e.out, attrs)
 	e.correctRotation()
 	markTextDecorations(e.out.items, e.out.rects, e.out.lines, e.page)
 	e.out.items = mergeTextItems(e.out.items)
-	return e.out, nil
+	return e.out, ctx.Err()
 }
 
 // clipAndNormalizePage drops content outside the effective page boundary and
@@ -304,7 +312,7 @@ func buildXObjects(xref *model.XRefTable, resources types.Dict) map[string]xObje
 }
 
 // run dispatches one content stream operation.
-func (e *extractor) run(op content.Operation) {
+func (e *extractor) run(ctx context.Context, op content.Operation) {
 	switch op.Operator {
 	case "q":
 		e.stack = append(e.stack, e.gs)
@@ -417,7 +425,7 @@ func (e *extractor) run(op content.Operation) {
 	case "Do":
 		if len(op.Operands) > 0 {
 			if n, ok := op.Operands[0].(content.Name); ok {
-				e.doXObject(string(n))
+				e.doXObject(ctx, string(n))
 			}
 		}
 	case "INLINE_IMAGE":
@@ -707,7 +715,7 @@ func (e *extractor) emitWithState(
 
 // doXObject handles an XObject invocation. Images become positioned
 // placeholders so downstream consumers can locate figures without reparsing.
-func (e *extractor) doXObject(name string) {
+func (e *extractor) doXObject(ctx context.Context, name string) {
 	xo, ok := e.xobjects[name]
 	if !ok {
 		return
@@ -716,15 +724,15 @@ func (e *extractor) doXObject(name string) {
 	case "Image":
 		e.emitImage(name)
 	case "Form":
-		e.runFormXObject(xo.object)
+		e.runFormXObject(ctx, xo.object)
 	}
 }
 
 // runFormXObject executes a Form's content with its Matrix and resource scope.
 // Forms are isolated graphics objects: their state and unbalanced q/Q or text
 // operators must not leak back into the invoking page stream.
-func (e *extractor) runFormXObject(object types.Object) {
-	if e.formDepth >= maxFormXObjectDepth {
+func (e *extractor) runFormXObject(ctx context.Context, object types.Object) {
+	if ctx.Err() != nil || e.formDepth >= maxFormXObjectDepth {
 		return
 	}
 	d := dictOf(e.xref, object)
@@ -771,7 +779,7 @@ func (e *extractor) runFormXObject(object types.Object) {
 	e.stack = nil
 	e.textMatrix, e.lineMatrix = identity, identity
 	e.inText = false
-	e.fonts = buildPageFonts(e.xref, resources)
+	e.fonts = buildPageFonts(ctx, e.xref, resources)
 	e.resources = resources
 	e.xobjects = buildXObjects(e.xref, resources)
 	e.formDepth++
@@ -779,7 +787,10 @@ func (e *extractor) runFormXObject(object types.Object) {
 	e.pendingSegs, e.pendingRe = nil, nil
 
 	for _, op := range ops {
-		e.run(op)
+		if ctx.Err() != nil {
+			break
+		}
+		e.run(ctx, op)
 	}
 
 	e.formDepth--

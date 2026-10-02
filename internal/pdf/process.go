@@ -2,6 +2,7 @@ package pdf
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -14,19 +15,22 @@ import (
 )
 
 // ProcessFile reads a PDF from disk and processes it according to opts.
-func ProcessFile(path string, opts Options) (*Result, error) {
+func ProcessFile(ctx context.Context, path string, opts Options) (*Result, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return Process(data, opts)
+	return Process(ctx, data, opts)
 }
 
 // Process processes a PDF held in memory.
-func Process(data []byte, opts Options) (*Result, error) {
+func Process(ctx context.Context, data []byte, opts Options) (*Result, error) {
 	start := time.Now()
 
-	doc, err := load(data, opts.Password)
+	doc, err := load(ctx, data, opts.Password)
 	if err != nil {
 		return nil, err
 	}
@@ -38,7 +42,7 @@ func Process(data []byte, opts Options) (*Result, error) {
 
 	// Keep classification independent of the requested pipeline depth. Hidden
 	// OCR layers can be added later as an explicit Mixed-document fallback.
-	pages, err := doc.extract(opts.Pages, false)
+	pages, err := doc.extract(ctx, opts.Pages, false)
 	if err != nil {
 		return nil, err
 	}
@@ -53,6 +57,9 @@ func Process(data []byte, opts Options) (*Result, error) {
 	quality := analyzeTextQuality(items)
 	res.HasEncodingIssues = quality.hasEncodingIssues
 	mergeOCRResults(res, quality)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	if opts.Mode == ModeDetectOnly {
 		res.ProcessingTime = time.Since(start)
@@ -67,6 +74,9 @@ func Process(data []byte, opts Options) (*Result, error) {
 	}
 
 	stats := calculateFontStats(textItems)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	if opts.Mode == ModeAnalyze {
 		res.ProcessingTime = time.Since(start)
@@ -75,6 +85,9 @@ func Process(data []byte, opts Options) (*Result, error) {
 
 	mdOpts := DefaultMarkdownOptions()
 	res.Markdown = toMarkdownFromPages(pages, stats, mdOpts)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	res.ProcessingTime = time.Since(start)
 	return res, nil
@@ -82,7 +95,10 @@ func Process(data []byte, opts Options) (*Result, error) {
 
 // extract runs the content stream of every selected page. pages holds 1-indexed
 // page numbers; an empty slice means the whole document.
-func (d *document) extract(pages []uint32, includeInvisible bool) ([]pageExtraction, error) {
+func (d *document) extract(ctx context.Context, pages []uint32, includeInvisible bool) ([]pageExtraction, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	selected := map[uint32]bool{}
 	for _, p := range pages {
 		selected[p] = true
@@ -90,12 +106,19 @@ func (d *document) extract(pages []uint32, includeInvisible bool) ([]pageExtract
 
 	out := make([]pageExtraction, 0, d.xref.PageCount)
 	for n := 1; n <= d.xref.PageCount; n++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if len(selected) > 0 && !selected[uint32(n)] {
 			continue
 		}
 		// A page that fails to parse should not sink the whole document:
 		// real-world PDFs routinely carry one corrupt page among good ones.
-		pe, err := extractPage(d.xref, n, includeInvisible)
+		pe, err := extractPage(ctx, d.xref, n, includeInvisible)
+		// Cancellation must abort extraction, not turn a page into an OCR fallback.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if err != nil {
 			pe.failed = true
 			out = append(out, pe)
@@ -142,19 +165,24 @@ type document struct {
 }
 
 // load opens a PDF, mapping pdfcpu's failure modes onto this package's errors.
-func load(data []byte, password string) (*document, error) {
+func load(ctx context.Context, data []byte, password string) (*document, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if !looksLikePDF(data) {
 		return nil, ErrNotAPDF
 	}
 
-	conf := model.NewDefaultConfiguration()
+	// Use built-in defaults without reading or creating configuration, font,
+	// or certificate directories, or changing pdfcpu's process-wide settings.
+	conf := model.NewStatelessConfiguration()
 	// Real-world PDFs frequently violate the spec in ways that do not affect
 	// text extraction, so validation is deliberately permissive.
 	conf.ValidationMode = model.ValidationRelaxed
 	conf.UserPW = password
 	conf.OwnerPW = password
 
-	ctx, err := pdfcpu.Read(bytes.NewReader(data), conf)
+	doc, err := pdfcpu.Read(ctx, bytes.NewReader(data), conf)
 	if err != nil {
 		if isEncryptionError(err) {
 			return nil, ErrEncrypted
@@ -162,10 +190,10 @@ func load(data []byte, password string) (*document, error) {
 		return nil, fmt.Errorf("pdf: %w", err)
 	}
 
-	if err := ctx.XRefTable.EnsurePageCount(); err != nil {
+	if err := doc.XRefTable.EnsurePageCount(); err != nil {
 		return nil, fmt.Errorf("pdf: page count: %w", err)
 	}
-	return &document{xref: ctx.XRefTable}, nil
+	return &document{xref: doc.XRefTable}, nil
 }
 
 // looksLikePDF checks for the %PDF- header. Some generators emit leading
@@ -210,10 +238,13 @@ func (d *document) title() string {
 }
 
 // ProcessReader processes a PDF read from r.
-func ProcessReader(r io.Reader, opts Options) (*Result, error) {
+func ProcessReader(ctx context.Context, r io.Reader, opts Options) (*Result, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return nil, err
 	}
-	return Process(data, opts)
+	return Process(ctx, data, opts)
 }

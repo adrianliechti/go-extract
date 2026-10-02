@@ -197,7 +197,7 @@ func TestPinnedExternalTableFixtures(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			result, err := ProcessFile(test.path, Options{})
+			result, err := ProcessFile(t.Context(), test.path, Options{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -237,7 +237,7 @@ func TestPinnedExternalOCRFixturesAreRouted(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(filepath.Base(test.path), func(t *testing.T) {
-			result, err := ProcessFile(test.path, Options{Mode: ModeDetectOnly})
+			result, err := ProcessFile(t.Context(), test.path, Options{Mode: ModeDetectOnly})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -287,7 +287,7 @@ func TestPinnedExternalDocumentFixtures(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			result, err := ProcessFile(test.path, Options{})
+			result, err := ProcessFile(t.Context(), test.path, Options{})
 			if err != nil {
 				t.Fatal(err)
 			}

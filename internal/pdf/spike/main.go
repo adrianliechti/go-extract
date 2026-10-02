@@ -11,6 +11,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -93,14 +94,14 @@ func probe(path string) result {
 		return r
 	}
 
-	conf := model.NewDefaultConfiguration()
+	conf := model.NewStatelessConfiguration()
 	conf.ValidationMode = model.ValidationRelaxed
 	// encrypted-secret123.pdf carries a user password; mirrors PdfOptions::password.
 	if strings.Contains(r.name, "secret123") {
 		conf.UserPW = "secret123"
 	}
 
-	ctx, err := pdfcpu.Read(bytes.NewReader(data), conf)
+	ctx, err := pdfcpu.Read(context.Background(), bytes.NewReader(data), conf)
 	if err != nil {
 		r.err = "read: " + err.Error()
 		return r
@@ -116,7 +117,7 @@ func probe(path string) result {
 	}
 
 	for i := 1; i <= r.pages; i++ {
-		d, _, _, err := xt.PageDict(i, false)
+		d, _, _, err := xt.PageDict(context.Background(), i, false)
 		if err != nil || d == nil {
 			continue
 		}

@@ -50,18 +50,18 @@ func collectPrograms(t *testing.T) []program {
 			continue
 		}
 
-		conf := model.NewDefaultConfiguration()
+		conf := model.NewStatelessConfiguration()
 		conf.ValidationMode = model.ValidationRelaxed
 		conf.UserPW = fixturePasswords[e.Name()]
 
-		ctx, err := pdfcpu.Read(bytes.NewReader(data), conf)
+		ctx, err := pdfcpu.Read(t.Context(), bytes.NewReader(data), conf)
 		if err != nil || ctx.XRefTable.EnsurePageCount() != nil {
 			continue
 		}
 		xt := ctx.XRefTable
 
 		for i := 1; i <= xt.PageCount; i++ {
-			d, _, _, err := xt.PageDict(i, false)
+			d, _, _, err := xt.PageDict(t.Context(), i, false)
 			if err != nil || d == nil {
 				continue
 			}
