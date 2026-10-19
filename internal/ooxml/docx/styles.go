@@ -12,6 +12,7 @@ import (
 // basedOn, so lookups walk upward until a definition is found.
 type styleTable struct {
 	byID             map[string]*style
+	chains           map[string][]*style
 	defaultParagraph string
 	defaultCharacter string
 	defaultPPr       *paraProps
@@ -89,26 +90,46 @@ func (t *styleTable) walk(id string, fn func(*style) bool) {
 	if t == nil {
 		return
 	}
+	for _, s := range t.chain(id) {
+		if fn(s) {
+			return
+		}
+	}
+}
+
+// Styles are immutable during conversion. Cache the ordered chain rather than
+// flattened properties: b/i/strike must still toggle in inheritance order.
+// The cache belongs to this document and retains the existing cycle/depth and
+// style-family boundaries.
+func (t *styleTable) chain(id string) []*style {
+	if chain, ok := t.chains[id]; ok {
+		return chain
+	}
+	key := id
+	var chain []*style
 	seen := map[string]bool{}
 	var styleType string
 	for depth := 0; id != "" && depth < 16; depth++ {
 		if seen[id] {
-			return
+			break
 		}
 		seen[id] = true
 		s, ok := t.byID[id]
 		if !ok {
-			return
+			break
 		}
 		if styleType != "" && s.Type != "" && s.Type != styleType {
-			return // basedOn cannot cross style families (§17.7.4.3).
+			break // basedOn cannot cross style families (§17.7.4.3).
 		}
 		styleType = s.Type
-		if fn(s) {
-			return
-		}
+		chain = append(chain, s)
 		id = s.BasedOn
 	}
+	if t.chains == nil {
+		t.chains = map[string][]*style{}
+	}
+	t.chains[key] = chain
+	return chain
 }
 
 func (t *styleTable) paragraphStyle(id string) string {
@@ -255,11 +276,10 @@ func (t *styleTable) runFormatting(paragraphID string, direct *runProps) runProp
 		out.apply(t.defaultRPr, false)
 	}
 	applyStyle := func(id string) {
-		var chain []*style
-		t.walk(id, func(s *style) bool {
-			chain = append(chain, s)
-			return false
-		})
+		if t == nil {
+			return
+		}
+		chain := t.chain(id)
 		for i := len(chain) - 1; i >= 0; i-- {
 			out.apply(chain[i].RPr, true)
 		}

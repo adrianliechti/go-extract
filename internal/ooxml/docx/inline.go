@@ -18,7 +18,16 @@ type imageRef struct {
 // around contiguous spans that share formatting rather than per run, so
 // "**bo**​**ld**" collapses to "**bold**".
 func (c *converter) inlineText(p *paragraph) string {
+	context := mdw.Inline
+	if _, heading := c.styles.paragraphHeading(p, c.styles.paragraphStyle(p.styleID())); heading {
+		context = mdw.Heading
+	}
+	return c.inlineTextContext(p, context)
+}
+
+func (c *converter) inlineTextContext(p *paragraph, context mdw.TextContext) string {
 	var b strings.Builder
+	lineStart := true
 	styleID := c.styles.paragraphStyle(p.styleID())
 
 	// Track the currently open emphasis so adjacent runs with matching
@@ -26,7 +35,7 @@ func (c *converter) inlineText(p *paragraph) string {
 	var openBold, openItalic, openStrike bool
 	var pendingSpace strings.Builder
 	flushSpace := func() {
-		b.WriteString(pendingSpace.String())
+		b.WriteString(mdw.EscapeFragment(pendingSpace.String(), context, &lineStart))
 		pendingSpace.Reset()
 	}
 
@@ -46,6 +55,9 @@ func (c *converter) inlineText(p *paragraph) string {
 	}
 
 	emit := func(source *run, linkTarget string) {
+		if !c.w.Admit(uint64(b.Len()) + uint64(pendingSpace.Len()) + uint64(len(source.Text))) {
+			return
+		}
 		r := *source
 		formatting := c.styles.runFormatting(styleID, source.RPr)
 		r.RPr = &formatting
@@ -73,7 +85,7 @@ func (c *converter) inlineText(p *paragraph) string {
 		// Delay trailing whitespace until the next run's formatting is known:
 		// it belongs inside a continuing span, outside a closing delimiter.
 		flushSpace()
-		b.WriteString(lead)
+		b.WriteString(mdw.EscapeFragment(lead, context, &lineStart))
 		if wantBold && !openBold {
 			b.WriteString("**")
 			openBold = true
@@ -88,13 +100,20 @@ func (c *converter) inlineText(p *paragraph) string {
 		}
 
 		if code {
-			core = codeSpan(core)
+			core = codeSpan(strings.ReplaceAll(strings.ReplaceAll(core, "\r", " "), "\n", " "))
+			if context == mdw.TableCell {
+				core = strings.ReplaceAll(core, "|", `\|`)
+			}
+			lineStart = false
 		} else {
-			core = mdw.EscapeInline(core)
+			core = mdw.EscapeFragment(core, context, &lineStart)
 		}
 
 		if linkTarget != "" {
-			core = "[" + core + "](" + mdw.EscapeURL(linkTarget) + ")"
+			core = mdw.Link(core, linkTarget)
+		}
+		if !c.w.Admit(uint64(b.Len()) + uint64(len(core))) {
+			return
 		}
 		b.WriteString(core)
 		pendingSpace.WriteString(trail)

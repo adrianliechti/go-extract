@@ -28,7 +28,10 @@ func Convert(pkg *opc.Package, mainPart string, opts model.Options) (*model.Docu
 
 	for i, part := range slides {
 		c := &slideConverter{pkg: pkg, part: part, opts: opts, images: images, w: w}
-		if !c.render(i + 1) {
+		if err := c.render(i + 1); err != nil {
+			return nil, err
+		}
+		if c.skipped {
 			continue
 		}
 		doc.SlideCount++
@@ -40,6 +43,9 @@ func Convert(pkg *opc.Package, mainPart string, opts model.Options) (*model.Docu
 		}
 	}
 
+	if err := w.Err(); err != nil {
+		return nil, err
+	}
 	doc.Markdown = w.String()
 	doc.Images = images.Images()
 	return doc, nil
@@ -138,26 +144,28 @@ func slideNumber(part string) int {
 // ── slide rendering ──────────────────────────────────────────────────
 
 type slideConverter struct {
-	pkg    *opc.Package
-	part   string
-	opts   model.Options
-	images *media.Collector
-	w      *mdw.Writer
+	skipped bool
+	pkg     *opc.Package
+	part    string
+	opts    model.Options
+	images  *media.Collector
+	w       *mdw.Writer
 }
 
-func (c *slideConverter) render(number int) bool {
+func (c *slideConverter) render(number int) error {
 	sl, err := parseSlide(c.pkg, c.part)
 	if err != nil {
-		return false
+		return err
 	}
 	if sl.hidden && !c.opts.IncludeHidden {
-		return false
+		c.skipped = true
+		return nil
 	}
 
 	// A slide with nothing on it contributes no structure, so it gets no
 	// heading — an empty "## Slide 4" is noise to a reader and to an agent.
 	if len(sl.Shapes) == 0 && len(sl.Tables) == 0 && len(sl.Pics) == 0 {
-		return true
+		return c.w.Err()
 	}
 
 	// Order shapes by their position on the slide (top to bottom, then left to
@@ -183,7 +191,11 @@ func (c *slideConverter) render(number int) bool {
 	for _, sh := range sl.Shapes {
 		if sh.isTitle && !titled && len(sh.paras) > 0 {
 			if text := joinParaText(sh.paras); text != "" {
-				c.w.Heading(2, text)
+				var parts []string
+				for _, p := range sh.paras {
+					parts = append(parts, p.markdown(c.pkg.Rels(c.part), sh.link, mdw.Heading))
+				}
+				c.w.Heading(2, strings.Join(parts, " "))
 				titled = true
 				continue
 			}
@@ -196,7 +208,7 @@ func (c *slideConverter) render(number int) bool {
 	}
 
 	c.renderPics(sl.Pics)
-	return true
+	return c.w.Err()
 }
 
 // renderPics emits a slide's pictures in position order, carrying the alt text
@@ -235,7 +247,7 @@ func (c *slideConverter) renderShape(sh *shape) {
 	c.w.EndList()
 	orderedCounters := map[int]int{}
 	for _, p := range sh.paras {
-		text := strings.TrimSpace(p.text)
+		text := p.markdown(c.pkg.Rels(c.part), sh.link, mdw.Inline)
 		if text == "" {
 			continue
 		}
@@ -297,7 +309,7 @@ func notesText(pkg *opc.Package, slidePart string) string {
 		for _, sh := range sl.Shapes {
 			for _, p := range sh.paras {
 				if s := strings.TrimSpace(p.text); s != "" {
-					parts = append(parts, s)
+					parts = append(parts, p.markdown(pkg.Rels(part), sh.link, mdw.Inline))
 				}
 			}
 		}

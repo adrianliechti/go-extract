@@ -88,7 +88,7 @@ var (
 	// ErrUnsupportedFormat means the package is OOXML but not one of the
 	// three supported document types.
 	ErrUnsupportedFormat = errors.New("ooxml: unsupported document format")
-	// ErrResourceLimit means the package crossed an archive safety limit.
+	// ErrResourceLimit means the package crossed an archive or Markdown output limit.
 	ErrResourceLimit = opc.ErrResourceLimit
 )
 

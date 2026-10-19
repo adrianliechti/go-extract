@@ -27,6 +27,13 @@ supported compatibility branches and honors list start/restart rules. Excel
 selects number-format sections by value, emits ISO dates and clock times,
 and preserves elapsed durations longer than a day.
 
+Office output escapes literal Markdown and HTML characters while retaining
+authored formatting. Hyperlinks allow HTTP, HTTPS, mailto, tel, and relative
+targets; other schemes retain their text without a link. Tables use compact
+Markdown without column padding. Generated Office Markdown has a fixed 64 MiB
+limit, separate from archive limits; exceeding it returns an error rather than
+a partial document.
+
 ```go
 package main
 
@@ -129,3 +136,15 @@ Run the synthetic Office end-to-end tests with `task test-ooxml-e2e` (or
 `go test ./internal/ooxml -run EndToEnd -count=1`). They exercise DOCX, XLSX,
 and PPTX through the public API, including local files, in-memory documents,
 embedded images, and Office documents inside ZIP archives.
+
+To also check all tracked Office fixtures in local source repositories, run:
+
+```sh
+GO_EXTRACT_DOCLING=/path/to/docling \
+GO_EXTRACT_OOXML_VIEWER=/path/to/office-open-xml-viewer \
+go test ./internal/ooxml -run TestSourceRepository -count=1
+```
+
+These checks require every tracked Office file to convert successfully and
+verify selected fixtures' text, tables, formatting, and links. Synthetic
+regressions derived from both projects run with the normal test suite.

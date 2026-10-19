@@ -33,13 +33,17 @@ func Convert(pkg *opc.Package, mainPart string, opts model.Options) (*model.Docu
 	for _, sh := range sheets {
 		doc.SheetNames = append(doc.SheetNames, sh.Name)
 
-		rows := readSheet(pkg, sh.Part, shared, styles)
+		rows := readSheet(pkg, sh.Part, shared, styles, w)
 		// The sheet name is document content, not decoration: it often carries
 		// the only description of what the table holds. It is emitted even for
 		// a single-sheet workbook.
-		w.Heading(2, sh.Name)
+		w.Heading(2, mdw.EscapeText(sh.Name, mdw.Heading))
 		if len(rows) > 0 {
 			w.Table(rows)
+		}
+
+		if err := w.Err(); err != nil {
+			return nil, err
 		}
 
 		// Images anchored to this sheet follow its table.
@@ -50,6 +54,9 @@ func Convert(pkg *opc.Package, mainPart string, opts model.Options) (*model.Docu
 		}
 	}
 
+	if err := w.Err(); err != nil {
+		return nil, err
+	}
 	doc.Markdown = w.String()
 	doc.Images = images.Images()
 	return doc, nil
@@ -173,7 +180,7 @@ type sheetHyperlink struct {
 
 // readSheet renders a worksheet into a dense rectangular grid, filling gaps
 // left by sparse cell references.
-func readSheet(pkg *opc.Package, part string, shared []string, styles *cellStyles) [][]string {
+func readSheet(pkg *opc.Package, part string, shared []string, styles *cellStyles, w *mdw.Writer) [][]string {
 	var sh xmlSheet
 	if err := pkg.UnmarshalPart(part, &sh); err != nil {
 		return nil
@@ -188,6 +195,7 @@ func readSheet(pkg *opc.Package, part string, shared []string, styles *cellStyle
 		cells []placed
 	}
 	var grid []placedRow
+	var contentBytes uint64
 	maxCol := 0
 	links := resolveHyperlinks(pkg.Rels(part), sh.Hyperlinks)
 	nextRow := 1
@@ -245,9 +253,16 @@ func readSheet(pkg *opc.Package, part string, shared []string, styles *cellStyle
 			if v == "" {
 				continue
 			}
-			v = styles.format(c.S, v)
+			if !w.Admit(contentBytes + uint64(len(v))) {
+				return nil
+			}
+			v = styles.format(c.S, mdw.EscapeCell(v))
 			if linked && link.target != "" {
-				v = "[" + v + "](" + mdw.EscapeURL(link.target) + ")"
+				v = mdw.Link(v, link.target)
+			}
+			contentBytes += uint64(len(v))
+			if !w.Admit(contentBytes) {
+				return nil
 			}
 			cells = append(cells, placed{col: col, val: v})
 			if col+1 > maxCol {
@@ -283,6 +298,9 @@ func readSheet(pkg *opc.Package, part string, shared []string, styles *cellStyle
 		return nil
 	}
 
+	if !w.AdmitTable(len(grid)+1, width) {
+		return nil
+	}
 	rows := make([][]string, len(grid))
 	for index, placedRow := range grid {
 		row := make([]string, width)
