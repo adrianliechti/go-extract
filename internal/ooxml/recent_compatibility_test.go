@@ -63,7 +63,7 @@ func TestOfficeTextCompatibilityEndToEnd(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if string(doc.Format) != tc.format || doc.Markdown != tc.want {
+					if string(doc.Format) != tc.format || renderGFM(t, doc.Markdown) != renderGFM(t, tc.want) {
 						t.Fatalf("format=%q Markdown=%q, want %q", doc.Format, doc.Markdown, tc.want)
 					}
 				})

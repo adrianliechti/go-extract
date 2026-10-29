@@ -37,7 +37,11 @@ func Convert(pkg *opc.Package, mainPart string, opts model.Options) (*model.Docu
 		images: media.NewCollector(pkg, opts),
 		w:      mdw.New(),
 	}
+	c.num.styles = c.styles
 	c.renderBlocks(body.Blocks)
+	if err := c.w.Err(); err != nil {
+		return nil, err
+	}
 
 	doc.Markdown = c.w.String()
 	doc.Images = c.images.Images()
@@ -135,6 +139,9 @@ func (c *converter) renderBlocks(blocks []block) {
 		c.startedLists = map[string]bool{}
 	}
 	for _, b := range blocks {
+		if c.w.Err() != nil {
+			return
+		}
 		switch {
 		case b.Para != nil:
 			c.renderParagraph(b.Para)
@@ -352,7 +359,7 @@ func (c *converter) cellText(cell *tableCell) string {
 	for _, b := range cell.Blocks {
 		switch {
 		case b.Para != nil:
-			if s := strings.TrimSpace(c.inlineText(b.Para)); s != "" {
+			if s := strings.TrimSpace(c.inlineTextContext(b.Para, mdw.TableCell)); s != "" {
 				parts = append(parts, s)
 			}
 		case b.Table != nil:
@@ -367,7 +374,7 @@ func (c *converter) cellText(cell *tableCell) string {
 			}
 		}
 	}
-	return strings.Join(parts, "\n")
+	return strings.Join(parts, "<br>")
 }
 
 // ── errors ───────────────────────────────────────────────────────────

@@ -10,6 +10,8 @@ import (
 // format. WordprocessingML indirects twice: w:num maps a numId to an
 // abstractNumId, and w:abstractNum holds the per-level formats.
 type numbering struct {
+	styles     *styleTable
+	styleLinks map[string]string
 	// numToAbstract maps numId -> abstractNumId.
 	numToAbstract map[string]string
 	// levels maps abstractNumId -> level -> format.
@@ -51,8 +53,9 @@ func listStart(value *val) int {
 
 type xmlNumbering struct {
 	AbstractNums []struct {
-		ID     string        `xml:"abstractNumId,attr"`
-		Levels []xmlNumLevel `xml:"lvl"`
+		ID        string        `xml:"abstractNumId,attr"`
+		StyleLink *val          `xml:"numStyleLink"`
+		Levels    []xmlNumLevel `xml:"lvl"`
 	} `xml:"abstractNum"`
 	Nums []struct {
 		ID          string `xml:"numId,attr"`
@@ -68,6 +71,7 @@ type xmlNumbering struct {
 func loadNumbering(pkg *opc.Package, mainPart string) *numbering {
 	n := &numbering{
 		numToAbstract: map[string]string{},
+		styleLinks:    map[string]string{},
 		levels:        map[string]map[int]numLevel{},
 		overrides:     map[string]map[int]numLevel{},
 		starts:        map[string]map[int]int{},
@@ -84,6 +88,9 @@ func loadNumbering(pkg *opc.Package, mainPart string) *numbering {
 	}
 
 	for _, an := range x.AbstractNums {
+		if an.StyleLink != nil {
+			n.styleLinks[an.ID] = an.StyleLink.Val
+		}
 		levels := map[int]numLevel{}
 		for _, lv := range an.Levels {
 			idx, err := strconv.Atoi(lv.ILvl)
@@ -137,22 +144,42 @@ func (n *numbering) format(numID string, level int) (ordered bool, start int) {
 	return lv.Format != "bullet" && lv.Format != "none" && lv.Format != "", start
 }
 
+// ECMA-376 §17.9.21: numStyleLink delegates level definitions through a
+// numbering style's numId. Resolve each hop with its overrides, nearest first;
+// malformed cycles and dangling links degrade to the existing unordered fallback.
 func (n *numbering) lookup(numID string, level int) (numLevel, bool) {
-	if ov, ok := n.overrides[numID]; ok {
-		if lv, ok := ov[level]; ok {
+	seen := map[string]bool{}
+	var start *int
+	for numID != "" && len(seen) < 16 && !seen[numID] {
+		seen[numID] = true
+		if value, ok := n.starts[numID][level]; ok && start == nil {
+			start = &value
+		}
+		lv, ok := n.overrides[numID][level]
+		abstract := n.numToAbstract[numID]
+		if !ok {
+			lv, ok = n.levels[abstract][level]
+		}
+		if ok {
+			if start != nil {
+				lv.Start = *start
+			}
 			return lv, true
 		}
+		if n.styles == nil {
+			break
+		}
+		style := n.styles.byID[n.styleLinks[abstract]]
+		if style == nil || (style.Type != "" && style.Type != "numbering") {
+			break
+		}
+		props := n.styles.numbering(style.ID)
+		if props.NumID == nil {
+			break
+		}
+		numID = props.NumID.Val
 	}
-	abstract, ok := n.numToAbstract[numID]
-	if !ok {
-		return numLevel{}, false
-	}
-	levels, ok := n.levels[abstract]
-	if !ok {
-		return numLevel{}, false
-	}
-	lv, ok := levels[level]
-	return lv, ok
+	return numLevel{}, false
 }
 
 func valOr(v *val, def string) string {

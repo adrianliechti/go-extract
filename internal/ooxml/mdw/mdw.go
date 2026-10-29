@@ -4,14 +4,18 @@
 package mdw
 
 import (
+	"fmt"
 	"strings"
-	"unicode/utf8"
+
+	"github.com/adrianliechti/go-extract/internal/ooxml/opc"
 )
 
 // Writer accumulates Markdown, managing blank lines between blocks so callers
 // do not have to track them.
 type Writer struct {
-	b strings.Builder
+	limit uint64
+	err   error
+	b     strings.Builder
 	// pendingBreak records that a blank line is owed before the next block.
 	pendingBreak bool
 	// wroteAny records whether any block has been written, so the document
@@ -22,8 +26,44 @@ type Writer struct {
 	listPending bool
 }
 
-// New returns an empty Writer.
-func New() *Writer { return &Writer{} }
+// maxOutputBytes is a fixed internal ceiling on generated Markdown. ZIP size
+// limits do not bound repeated shared strings, merged cells or dense tables.
+const maxOutputBytes uint64 = 64 << 20
+
+func New() *Writer { return &Writer{limit: maxOutputBytes} }
+
+func (w *Writer) Err() error { return w.err }
+
+// Admit checks projected bytes before callers allocate expanded content.
+// It does not reserve bytes; write accounts for the actual emitted output.
+func (w *Writer) Admit(n uint64) bool {
+	if w.err != nil {
+		return false
+	}
+	if n > w.limit-uint64(w.b.Len()) {
+		w.err = fmt.Errorf("%w: Markdown exceeds %d bytes", opc.ErrResourceLimit, w.limit)
+		return false
+	}
+	return true
+}
+
+func (w *Writer) write(s string) {
+	if w.Admit(uint64(len(s))) {
+		w.b.WriteString(s)
+	}
+}
+
+// AdmitTable rejects a dense table before its empty cells are allocated.
+// Every cell needs at least three output bytes, even with no text or padding.
+func (w *Writer) AdmitTable(rows, cols int) bool {
+	if rows < 0 || cols < 0 {
+		return w.Admit(w.limit + 1)
+	}
+	if uint64(cols) > w.limit/3 || uint64(rows) > w.limit/(uint64(cols)*3+2) {
+		return w.Admit(w.limit + 1)
+	}
+	return w.Admit(uint64(rows) * (uint64(cols)*3 + 2))
+}
 
 // String returns the accumulated Markdown with a single trailing newline.
 func (w *Writer) String() string {
@@ -49,7 +89,7 @@ func (w *Writer) startBlock() {
 		return
 	}
 	if w.pendingBreak {
-		w.b.WriteString("\n")
+		w.write("\n")
 		w.pendingBreak = false
 	}
 }
@@ -62,7 +102,7 @@ func (w *Writer) startListItem() {
 		return
 	}
 	if w.pendingBreak && !w.listPending {
-		w.b.WriteString("\n")
+		w.write("\n")
 	}
 	w.pendingBreak = false
 }
@@ -74,8 +114,8 @@ func (w *Writer) Block(s string) {
 		return
 	}
 	w.startBlock()
-	w.b.WriteString(s)
-	w.b.WriteString("\n")
+	w.write(s)
+	w.write("\n")
 	w.pendingBreak = true
 }
 
@@ -120,7 +160,7 @@ func (w *Writer) listItem(depth int, marker, text string) {
 
 	// Consecutive list items form one block, so no blank line between them.
 	w.startListItem()
-	w.b.WriteString(indent + marker + " " + text + "\n")
+	w.write(indent + marker + " " + text + "\n")
 	w.listPending = true
 }
 
@@ -139,95 +179,65 @@ func (w *Writer) EndList() {
 }
 
 // Raw appends text verbatim, without block handling.
-func (w *Writer) Raw(s string) { w.b.WriteString(s) }
+func (w *Writer) Raw(s string) { w.write(s) }
 
 // Rule writes a thematic break.
 func (w *Writer) Rule() {
 	w.startBlock()
-	w.b.WriteString("---\n")
+	w.write("---\n")
 	w.pendingBreak = true
 }
 
-// Table renders rows as a GFM table. The first row is the header. Rows with
-// differing lengths are padded so the table stays well-formed. An entirely
-// empty table is skipped.
+// Table renders already-escaped inline Markdown cells. Callers escape literal
+// text before adding their own emphasis, links and line breaks. Re-escaping
+// here would corrupt those constructs and turn escaped pipes into delimiters.
+// Rows are padded with empty cells, but text is never padded to column width:
+// a single long value must not multiply the size of every other row.
 func (w *Writer) Table(rows [][]string) {
-	if len(rows) == 0 {
+	if len(rows) == 0 || allEmpty(rows) {
 		return
 	}
-
 	cols := 0
-	for _, r := range rows {
-		if len(r) > cols {
-			cols = len(r)
-		}
+	for _, row := range rows {
+		cols = max(cols, len(row))
 	}
-	if cols == 0 {
+	if cols == 0 || !w.AdmitTable(len(rows)+1, cols) {
 		return
 	}
-
-	// Normalise shape and escape cell content.
-	norm := make([][]string, len(rows))
-	for i, r := range rows {
-		row := make([]string, cols)
-		for j := 0; j < cols; j++ {
-			if j < len(r) {
-				row[j] = EscapeCell(r[j])
-			}
-		}
-		norm[i] = row
-	}
-
-	if allEmpty(norm) {
-		return
-	}
-
-	// Column widths make the source readable and match the GFM-normalised
-	// form used by the reference corpora.
-	widths := make([]int, cols)
-	for _, r := range norm {
-		for j, c := range r {
-			if n := utf8.RuneCountInString(c); n > widths[j] {
-				widths[j] = n
-			}
-		}
-	}
-	for j := range widths {
-		if widths[j] < 3 {
-			widths[j] = 3
-		}
-	}
-
 	w.startBlock()
-
-	writeRow := func(cells []string) {
-		w.b.WriteString("|")
-		for j, c := range cells {
-			w.b.WriteString(" ")
-			w.b.WriteString(c)
-			w.b.WriteString(strings.Repeat(" ", widths[j]-utf8.RuneCountInString(c)))
-			w.b.WriteString(" |")
+	writeRow := func(row []string) {
+		w.write("|")
+		for col := 0; col < cols; col++ {
+			w.write(" ")
+			if col < len(row) {
+				w.write(row[col])
+			}
+			w.write(" |")
 		}
-		w.b.WriteString("\n")
+		w.write("\n")
 	}
-
-	writeRow(norm[0])
-
-	w.b.WriteString("|")
-	for j := 0; j < cols; j++ {
-		w.b.WriteString(" " + strings.Repeat("-", widths[j]) + " |")
+	writeRow(rows[0])
+	w.write("|")
+	for col := 0; col < cols; col++ {
+		w.write(" --- |")
 	}
-	w.b.WriteString("\n")
-
-	for _, r := range norm[1:] {
-		writeRow(r)
+	w.write("\n")
+	for _, row := range rows[1:] {
+		if w.Err() != nil {
+			return
+		}
+		writeRow(row)
 	}
 	w.pendingBreak = true
 }
 
 // Image writes an image reference as its own block.
 func (w *Writer) Image(alt, src string) {
-	w.Block("![" + EscapeInline(FlattenSpace(alt)) + "](" + EscapeURL(src) + ")")
+	if target := EscapeURL(src); target != "" {
+		w.Block("![" + EscapeInline(FlattenSpace(alt)) + "](" + target + ")")
+	} else {
+		w.Block(EscapeInline(FlattenSpace(alt)))
+	}
 }
 
 // FlattenSpace collapses every run of whitespace to a single space and trims
@@ -260,53 +270,6 @@ func allEmpty(rows [][]string) bool {
 		}
 	}
 	return true
-}
-
-// EscapeInline escapes Markdown control characters in inline text.
-func EscapeInline(s string) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		switch r {
-		case '\\', '`', '*', '_', '[', ']', '<', '>':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
-
-// EscapeCell prepares text for a table cell: pipes are escaped and newlines
-// become <br>, since a GFM cell cannot span lines.
-func EscapeCell(s string) string {
-	s = strings.ReplaceAll(s, "\\", "\\\\")
-	s = strings.ReplaceAll(s, "|", "\\|")
-	s = strings.ReplaceAll(s, "\r\n", "\n")
-	s = strings.ReplaceAll(s, "\r", "\n")
-	s = strings.ReplaceAll(s, "\n", "<br>")
-	return strings.TrimSpace(s)
-}
-
-// EscapeURL percent-encodes the characters that would break a Markdown link
-// target, leaving the rest readable.
-func EscapeURL(s string) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		switch r {
-		case ' ':
-			b.WriteString("%20")
-		case '(':
-			b.WriteString("%28")
-		case ')':
-			b.WriteString("%29")
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }
 
 func itoa(n int) string {

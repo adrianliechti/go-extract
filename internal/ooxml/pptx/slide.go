@@ -2,6 +2,7 @@ package pptx
 
 import (
 	"encoding/xml"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -21,9 +22,10 @@ type slide struct {
 
 // slidePic is a picture placed on a slide, with the alt text authored for it.
 type slidePic struct {
-	blip media.Blip
-	alt  string
-	x, y int64
+	blip   media.Blip
+	alt    string
+	x, y   float64
+	cx, cy float64
 }
 
 // shape is a text-bearing shape with its position, used to recover reading
@@ -31,7 +33,9 @@ type slidePic struct {
 type shape struct {
 	paras          []slidePara
 	pic            slidePic
-	x, y           int64
+	x, y           float64
+	cx, cy         float64
+	link           *clickLink
 	isTitle        bool
 	isTextBox      bool
 	inheritsBullet bool
@@ -49,6 +53,7 @@ const (
 
 // slidePara is one paragraph inside a shape.
 type slidePara struct {
+	runs    []slideRun
 	text    string
 	level   int
 	bullet  bulletKind
@@ -68,20 +73,51 @@ func parseSlide(pkg *opc.Package, part string) (*slide, error) {
 	dec.CharsetReader = func(_ string, r io.Reader) (io.Reader, error) { return r, nil }
 
 	s := &slide{}
+	type group struct {
+		transform affine
+		hidden    bool
+	}
+	groups := []group{{transform: identity()}}
+	rels := pkg.Rels(part)
 	for {
 		tok, err := dec.Token()
 		if err != nil {
 			break
 		}
+		if end, ok := tok.(xml.EndElement); ok && end.Name.Local == "grpSp" && len(groups) > 1 {
+			groups = groups[:len(groups)-1]
+		}
 		se, ok := tok.(xml.StartElement)
 		if !ok {
 			continue
 		}
+		current := &groups[len(groups)-1]
 		switch se.Name.Local {
 		case "sld":
 			s.hidden = attr(se, "show") == "0" || attr(se, "show") == "false"
+		case "grpSp":
+			if len(groups) >= 128 {
+				return nil, fmt.Errorf("%w: PowerPoint group depth exceeds 128", opc.ErrResourceLimit)
+			}
+			groups = append(groups, *current)
+		case "cNvPr":
+			if len(groups) > 1 {
+				current.hidden = current.hidden || on(attr(se, "hidden"))
+			}
+		case "grpSpPr":
+			var props struct {
+				Transform groupTransform `xml:"xfrm"`
+			}
+			if err := dec.DecodeElement(&props, &se); err != nil {
+				return nil, err
+			}
+			current.transform = current.transform.compose(props.Transform.matrix())
+			if !current.transform.finite() {
+				return nil, fmt.Errorf("%w: non-finite PowerPoint group transform", opc.ErrResourceLimit)
+			}
 		case "sp":
-			if sh, ok := parseShape(dec, se); ok {
+			if sh, ok := parseShape(dec, se); ok && !current.hidden {
+				sh.x, sh.y = current.transform.topLeft(sh.x, sh.y, sh.cx, sh.cy)
 				if len(sh.paras) > 0 {
 					s.Shapes = append(s.Shapes, sh)
 				}
@@ -91,15 +127,17 @@ func parseSlide(pkg *opc.Package, part string) (*slide, error) {
 				}
 			}
 		case "graphicFrame":
-			if tbl, ok := parseGraphicFrame(dec, se); ok {
+			if tbl, ok := parseGraphicFrame(dec, se, rels); ok && !current.hidden {
 				s.Tables = append(s.Tables, tbl)
 			}
 		case "pic":
-			if pic, ok := parsePic(dec, se); ok {
+			if pic, ok := parsePic(dec, se); ok && !current.hidden {
+				pic.x, pic.y = current.transform.topLeft(pic.x, pic.y, pic.cx, pic.cy)
 				s.Pics = append(s.Pics, pic)
 			}
 		}
 	}
+
 	return s, nil
 }
 
@@ -120,6 +158,14 @@ func parseShape(dec *xml.Decoder, start xml.StartElement) (shape, bool) {
 			case "cNvPr":
 				sh.hidden = on(attr(t, "hidden"))
 				sh.pic.alt = firstNonEmpty(attr(t, "descr"), attr(t, "title"), attr(t, "name"))
+				var props struct {
+					Link *clickLink `xml:"hlinkClick"`
+				}
+				if err := dec.DecodeElement(&props, &t); err != nil {
+					return sh, false
+				}
+				sh.link = props.Link
+				depth--
 			case "blip":
 				if err := dec.DecodeElement(&sh.pic.blip, &t); err != nil {
 					return sh, false
@@ -138,15 +184,17 @@ func parseShape(dec *xml.Decoder, start xml.StartElement) (shape, bool) {
 				sh.isTitle = phType == "title" || phType == "ctrTitle"
 				// Only body/object placeholders inherit list markers by default.
 				sh.inheritsBullet = phType == "" || phType == "body" || phType == "obj"
-			case "off":
-				for _, a := range t.Attr {
-					switch a.Name.Local {
-					case "x":
-						sh.x, _ = strconv.ParseInt(a.Value, 10, 64)
-					case "y":
-						sh.y, _ = strconv.ParseInt(a.Value, 10, 64)
-					}
+			case "xfrm":
+				var transform struct {
+					Off groupPoint  `xml:"off"`
+					Ext groupExtent `xml:"ext"`
 				}
+				if err := dec.DecodeElement(&transform, &t); err != nil {
+					return sh, false
+				}
+				sh.x, sh.y = transform.Off.X, transform.Off.Y
+				sh.cx, sh.cy = transform.Ext.X, transform.Ext.Y
+				depth--
 			case "p":
 				if p, ok := parseTextParagraph(dec, t); ok {
 					sh.paras = append(sh.paras, p)
@@ -189,14 +237,28 @@ func parseTextParagraph(dec *xml.Decoder, start xml.StartElement) (slidePara, bo
 			case "buAutoNum":
 				p.bullet = bulletOrdered
 				p.startAt, _ = strconv.Atoi(attr(t, "startAt"))
+			case "r", "fld":
+				var run struct {
+					Text  string `xml:"t"`
+					Props struct {
+						Link *clickLink `xml:"hlinkClick"`
+					} `xml:"rPr"`
+				}
+				if err := dec.DecodeElement(&run, &t); err == nil {
+					b.WriteString(run.Text)
+					p.runs = append(p.runs, slideRun{text: run.Text, link: run.Props.Link})
+				}
+				depth--
 			case "t":
-				var s string
-				if err := dec.DecodeElement(&s, &t); err == nil {
-					b.WriteString(s)
+				var text string
+				if err := dec.DecodeElement(&text, &t); err == nil {
+					b.WriteString(text)
+					p.runs = append(p.runs, slideRun{text: text})
 				}
 				depth--
 			case "br":
 				b.WriteString(" ")
+				p.runs = append(p.runs, slideRun{text: " "})
 			}
 		case xml.EndElement:
 			depth--
@@ -212,7 +274,7 @@ func parseTextParagraph(dec *xml.Decoder, start xml.StartElement) (slidePara, bo
 }
 
 // parseGraphicFrame extracts a table from a p:graphicFrame element.
-func parseGraphicFrame(dec *xml.Decoder, start xml.StartElement) ([][]string, bool) {
+func parseGraphicFrame(dec *xml.Decoder, start xml.StartElement, rels opc.Relationships) ([][]string, bool) {
 	var rows [][]string
 	hidden := false
 	depth := 1
@@ -229,7 +291,7 @@ func parseGraphicFrame(dec *xml.Decoder, start xml.StartElement) ([][]string, bo
 				hidden = on(attr(t, "hidden"))
 			}
 			if t.Name.Local == "tr" {
-				if row, ok := parseTableRow(dec, t); ok {
+				if row, ok := parseTableRow(dec, t, rels); ok {
 					rows = append(rows, row)
 				}
 				depth--
@@ -241,7 +303,7 @@ func parseGraphicFrame(dec *xml.Decoder, start xml.StartElement) ([][]string, bo
 	return rows, !hidden && len(rows) > 0
 }
 
-func parseTableRow(dec *xml.Decoder, start xml.StartElement) ([]string, bool) {
+func parseTableRow(dec *xml.Decoder, start xml.StartElement, rels opc.Relationships) ([]string, bool) {
 	var cells []string
 	depth := 1
 
@@ -254,7 +316,7 @@ func parseTableRow(dec *xml.Decoder, start xml.StartElement) ([]string, bool) {
 		case xml.StartElement:
 			depth++
 			if t.Name.Local == "tc" {
-				cells = append(cells, parseTableCell(dec, t))
+				cells = append(cells, parseTableCell(dec, t, rels))
 				depth--
 			}
 		case xml.EndElement:
@@ -264,7 +326,7 @@ func parseTableRow(dec *xml.Decoder, start xml.StartElement) ([]string, bool) {
 	return cells, len(cells) > 0
 }
 
-func parseTableCell(dec *xml.Decoder, start xml.StartElement) string {
+func parseTableCell(dec *xml.Decoder, start xml.StartElement, rels opc.Relationships) string {
 	var parts []string
 	depth := 1
 
@@ -278,7 +340,7 @@ func parseTableCell(dec *xml.Decoder, start xml.StartElement) string {
 			depth++
 			if t.Name.Local == "p" {
 				if p, ok := parseTextParagraph(dec, t); ok {
-					parts = append(parts, p.text)
+					parts = append(parts, p.markdown(rels, nil, mdw.TableCell))
 				}
 				depth--
 			}
@@ -339,9 +401,17 @@ func parsePic(dec *xml.Decoder, start xml.StartElement) (slidePic, bool) {
 					return p, false
 				}
 				depth--
-			case "off":
-				p.x = parseInt(attr(t, "x"))
-				p.y = parseInt(attr(t, "y"))
+			case "xfrm":
+				var transform struct {
+					Off groupPoint  `xml:"off"`
+					Ext groupExtent `xml:"ext"`
+				}
+				if err := dec.DecodeElement(&transform, &t); err != nil {
+					return p, false
+				}
+				p.x, p.y = transform.Off.X, transform.Off.Y
+				p.cx, p.cy = transform.Ext.X, transform.Ext.Y
+				depth--
 			}
 		case xml.EndElement:
 			depth--
@@ -367,14 +437,6 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
-}
-
-func parseInt(s string) int64 {
-	n, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		return 0
-	}
-	return n
 }
 
 func on(value string) bool {
